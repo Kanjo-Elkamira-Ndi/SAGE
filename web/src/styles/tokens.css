@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@theme {
+  /* === Primary — Royal Blue === */
+  --color-primary: #1E3A8A;
+  --color-primary-hover: #16306F;
+  --color-primary-light: #3B5FCC;
+  --color-primary-subtle: #EEF2FF;
+
+  /* === Secondary — White / Neutral === */
+  --color-background: #FFFFFF;
+  --color-surface: #F8F9FB;
+  --color-border: #E4E7EC;
+
+  /* === Accent — Gold === */
+  --color-accent: #D4A017;
+  --color-accent-hover: #B8890F;
+  --color-accent-subtle: #FBF3DD;
+
+  /* === Text === */
+  --color-text-primary: #2D2E33;
+  --color-text-secondary: #5B5F69;
+  --color-text-on-primary: #FFFFFF;
+  --color-text-on-accent: #2D2E33;
+
+  /* === Semantic === */
+  --color-success: #1E8E5A;
+  --color-warning: #D4A017;
+  --color-danger: #C0362C;
+  --color-info: #3B5FCC;
+
+  /* === Typography === */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* === Shadows === */
+  --shadow-card: 0px 2px 4px rgba(45, 46, 51, 0.05);
+  --shadow-overlay: 0px 8px 16px rgba(45, 46, 51, 0.1);
+
+  /* === Border Radius === */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+
+  /* === Spacing === */
+  --spacing-base: 8px;
+  --spacing-gutter: 24px;
+  --spacing-container-max: 1280px;
+
+  /* === Typography Scale === */
+  --font-size-display-lg: 3rem;
+  --font-size-headline-lg: 2rem;
+  --font-size-headline-md: 1.5rem;
+  --font-size-headline-sm: 1.25rem;
+  --font-size-body-lg: 1.125rem;
+  --font-size-body-md: 1rem;
+  --font-size-body-sm: 0.875rem;
+  --font-size-label-md: 0.875rem;
+  --font-size-label-sm: 0.75rem;
+}
+
+/* === Base Styles === */
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    color: var(--color-text-primary);
+    background: var(--color-background);
+  }
+}
