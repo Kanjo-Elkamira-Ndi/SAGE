@@ -95,14 +95,14 @@ export default function LandingPage() {
           }}
         />
 
-        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="relative mx-auto max-w-7xl px-6 sm:px-8 lg:px-12">
           <div className="grid items-center gap-12 lg:grid-cols-[55%_45%] lg:gap-8">
             {/* ── Left Column: Text ── */}
             <motion.div
               variants={prefersReduced ? undefined : staggerHero}
               initial="initial"
               animate="animate"
-              className="max-w-xl"
+              className="lg:pr-8 xl:pr-12"
             >
               {/* Eyebrow */}
               <motion.span
@@ -186,6 +186,7 @@ export default function LandingPage() {
                 ease: EASE.out,
                 delay: 0.3,
               }}
+              className="lg:pl-8 xl:pl-12"
             >
               <HeroCarousel />
             </motion.div>

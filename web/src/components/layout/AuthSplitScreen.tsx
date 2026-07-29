@@ -1,6 +1,6 @@
-import { Link } from "react-router-dom";
 import auth1 from "@/assets/auth_1.png";
 import auth2 from "@/assets/auth_2.png";
+import { Navbar } from "./Navbar";
 
 const images = { auth1, auth2 } as const;
 
@@ -19,57 +19,18 @@ export function AuthSplitScreen({
 }: AuthSplitScreenProps) {
   return (
     <div className="flex min-h-screen flex-col">
-      {/* Navbar */}
-      <header className="sticky top-0 z-50 border-b border-border/50 bg-white/80 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-          <Link to="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-text-on-primary">
-              S
-            </div>
-            <span className="text-xl font-bold text-primary">SAGE</span>
-          </Link>
-          <nav className="hidden items-center gap-6 md:flex">
-            <Link
-              to="/"
-              className="text-sm font-medium text-text-secondary transition-colors hover:text-primary"
-            >
-              Home
-            </Link>
-            <Link
-              to="/about"
-              className="text-sm font-medium text-text-secondary transition-colors hover:text-primary"
-            >
-              About
-            </Link>
-            <Link
-              to="/login"
-              className="text-sm font-medium text-primary"
-            >
-              Login
-            </Link>
-            <Link
-              to="/register"
-              className="text-sm font-medium text-text-secondary transition-colors hover:text-primary"
-            >
-              Register
-            </Link>
-          </nav>
-        </div>
-      </header>
+      <Navbar />
 
       {/* Split Content */}
       <div className="flex flex-1">
         {/* Left — branded panel with background image */}
         <div className="relative hidden w-1/2 overflow-hidden lg:flex lg:items-center lg:justify-center">
-          {/* Background image */}
           <img
             src={images[image]}
             alt=""
             className="pointer-events-none absolute inset-0 h-full w-full object-cover"
           />
-          {/* Dark overlay for text readability */}
           <div className="pointer-events-none absolute inset-0 bg-primary/60" />
-          {/* Gradient overlay for depth */}
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-primary/80 via-transparent to-primary/40" />
 
           <div className="relative z-10 mx-auto max-w-md px-8 text-center">
