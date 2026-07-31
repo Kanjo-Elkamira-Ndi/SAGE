@@ -1,30 +1,38 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:mobile/main.dart';
+import 'package:mobile/app/app.dart';
+import 'package:mobile/app/theme/sage_colors.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('brand tokens match the documented palette', (tester) async {
+    expect(AppColors.primary, const Color(0xFF1E3A8A));
+    expect(AppColors.accent, const Color(0xFFD4A017));
+    expect(AppColors.textPrimary, const Color(0xFF2D2E33));
+    expect(AppColors.surface, const Color(0xFFF8F9FB));
+  });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  testWidgets('app boots to branded splash with role preview actions',
+      (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await tester.pumpAndSettle();
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    expect(find.text('SAGE'), findsOneWidget);
+    expect(find.text('Continue as Student'), findsOneWidget);
+    expect(find.text('Continue as Lecturer'), findsOneWidget);
+  });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  testWidgets('signing in as student lands on the student shell',
+      (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Continue as Student'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Good morning, Alex!'), findsOneWidget);
+    expect(find.text('Academic Portal'), findsOneWidget);
+    expect(find.text('Active Courses'), findsOneWidget);
   });
 }

@@ -1,0 +1,60 @@
+import '../../models/user.dart';
+import '../auth_repository.dart';
+
+/// In-memory auth with demo accounts per role. Used until Phase 2 wires the
+/// real `/auth/*` endpoints. Password is only checked for non-empty (demo).
+class MockAuthRepository implements AuthRepository {
+  MockAuthRepository();
+
+  static const demoStudent = User(
+    id: 'u-student-001',
+    email: 'alex.carter@student.sage.edu',
+    fullName: 'Alex Carter',
+    role: Role.student,
+    departmentName: 'Computer Science',
+  );
+
+  static const demoLecturer = User(
+    id: 'u-lecturer-001',
+    email: 'sarah.chen@sage.edu',
+    fullName: 'Dr. Sarah Chen',
+    role: Role.lecturer,
+    departmentName: 'Computer Science',
+  );
+
+  static const demoAdmin = User(
+    id: 'u-admin-001',
+    email: 'admin@sage.edu',
+    fullName: 'Admin',
+    role: Role.admin,
+  );
+
+  User? _session;
+
+  @override
+  Future<User?> currentUser() async => _session;
+
+  @override
+  Future<User> signIn({required String email, required String password}) async {
+    if (password.isEmpty) {
+      throw const SageAuthException('Please enter your password.');
+    }
+    final normalized = email.toLowerCase().trim();
+    final user = switch (normalized) {
+      'student' => demoStudent,
+      'lecturer' => demoLecturer,
+      'admin' => demoAdmin,
+      _ => null,
+    };
+    if (user == null) {
+      throw const SageAuthException('No account found for that email.');
+    }
+    _session = user;
+    return user;
+  }
+
+  @override
+  Future<void> signOut() async {
+    _session = null;
+  }
+}
