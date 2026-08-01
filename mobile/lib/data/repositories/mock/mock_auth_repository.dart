@@ -17,10 +17,10 @@ class MockAuthRepository implements AuthRepository {
 
   static const demoLecturer = User(
     id: 'u-lecturer-001',
-    email: 'sarah.chen@sage.edu',
-    fullName: 'Dr. Sarah Chen',
+    email: 'prof.rivers@sage.edu',
+    fullName: 'Prof. Rivers',
     role: Role.lecturer,
-    departmentName: 'Computer Science',
+    departmentName: 'Psychology',
   );
 
   static const demoAdmin = User(

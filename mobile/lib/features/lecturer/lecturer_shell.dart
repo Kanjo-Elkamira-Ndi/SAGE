@@ -2,16 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../../shared/widgets/app_shell.dart';
 
-/// Bottom nav + drawer configuration for the lecturer role.
+/// Bottom nav + drawer configuration for the lecturer role, following the
+/// Stitch lecturer app design: Dashboard · Courses · Tasks · Analytics.
 abstract final class LecturerShell {
-  static const String title = 'Lecturer Portal';
+  static const String title = 'SAGE Lecturer';
   static const String notificationPath = '/lecturer/notifications';
 
   static const List<ShellDestination> destinations = [
     ShellDestination(
-      label: 'Home',
-      icon: Icons.home_outlined,
-      selectedIcon: Icons.home,
+      label: 'Dashboard',
+      icon: Icons.dashboard_outlined,
+      selectedIcon: Icons.dashboard,
       path: '/lecturer/home',
     ),
     ShellDestination(
@@ -21,22 +22,16 @@ abstract final class LecturerShell {
       path: '/lecturer/courses',
     ),
     ShellDestination(
-      label: 'Assignments',
+      label: 'Tasks',
       icon: Icons.assignment_outlined,
       selectedIcon: Icons.assignment,
-      path: '/lecturer/assignments',
+      path: '/lecturer/tasks',
     ),
     ShellDestination(
-      label: 'Quizzes',
-      icon: Icons.quiz_outlined,
-      selectedIcon: Icons.quiz,
-      path: '/lecturer/quizzes',
-    ),
-    ShellDestination(
-      label: 'Performance',
-      icon: Icons.bar_chart_outlined,
-      selectedIcon: Icons.bar_chart,
-      path: '/lecturer/performance',
+      label: 'Analytics',
+      icon: Icons.insert_chart_outlined,
+      selectedIcon: Icons.insert_chart,
+      path: '/lecturer/analytics',
     ),
   ];
 
