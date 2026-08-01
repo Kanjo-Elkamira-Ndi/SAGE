@@ -4,33 +4,44 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/auth_controller.dart';
 import '../features/auth/splash_screen.dart';
 import '../features/lecturer/lecturer_home_page.dart';
+import '../features/onboarding/onboarding_screen.dart';
+import '../features/onboarding/sage_splash_screen.dart';
 import '../features/student/student_home_page.dart';
 import 'router_helpers.dart';
 
 /// Role-aware router. Redirect rules:
-/// - No/restoring session → `/splash`.
-/// - Authenticated but on splash → their role home.
+/// - No/restoring session → `/launch` (branded splash) → `/onboarding`.
+/// - Authenticated but on a public/launch route → their role home.
 /// - Authenticated but on another role's area → their role home.
 final appRouterProvider = Provider<GoRouter>((ref) {
   final router = GoRouter(
-    initialLocation: '/splash',
+    initialLocation: '/launch',
     redirect: (context, state) {
       final auth = ref.read(authControllerProvider);
       final path = state.matchedLocation;
+      final onLaunch = path == '/launch' || path == '/onboarding';
       final onSplash = path == '/splash';
 
       switch (auth.status) {
         case AuthStatus.restoring:
         case AuthStatus.unauthenticated:
-          return onSplash ? null : '/splash';
+          return (onLaunch || onSplash) ? null : '/splash';
         case AuthStatus.authenticated:
           final role = auth.user!.role;
-          if (onSplash) return homeFor(role);
+          if (onLaunch || onSplash) return homeFor(role);
           if (isRoleArea(role, path)) return null;
           return homeFor(role);
       }
     },
     routes: [
+      GoRoute(
+        path: '/launch',
+        builder: (context, state) => const SageSplashScreen(),
+      ),
+      GoRoute(
+        path: '/onboarding',
+        builder: (context, state) => const OnboardingScreen(),
+      ),
       GoRoute(
         path: '/splash',
         builder: (context, state) => const SplashScreen(),

@@ -7,6 +7,14 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
+// SAGE is a mobile-first app. On desktop we launch in a phone-shaped window
+// (logical client pixels) and enforce a floor so the UI can't be squished
+// into a size the mobile layout was never designed for.
+#define SAGE_WINDOW_WIDTH 390
+#define SAGE_WINDOW_HEIGHT 844
+#define SAGE_WINDOW_MIN_WIDTH 320
+#define SAGE_WINDOW_MIN_HEIGHT 640
+
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
@@ -45,14 +53,19 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "mobile");
+    gtk_header_bar_set_title(header_bar, "SAGE");
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "mobile");
+    gtk_window_set_title(window, "SAGE");
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  gtk_window_set_default_size(window, SAGE_WINDOW_WIDTH, SAGE_WINDOW_HEIGHT);
+  GdkGeometry geometry = {
+      .min_width = SAGE_WINDOW_MIN_WIDTH,
+      .min_height = SAGE_WINDOW_MIN_HEIGHT,
+  };
+  gtk_window_set_geometry_hints(window, nullptr, &geometry, GDK_HINT_MIN_SIZE);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
