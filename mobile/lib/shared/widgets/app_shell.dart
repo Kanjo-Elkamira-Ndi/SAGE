@@ -38,6 +38,12 @@ class AppShell extends ConsumerWidget {
     required this.drawerSections,
     required this.child,
     this.notificationPath,
+    this.appBarColor = AppColors.primary,
+    this.appBarForeground = Colors.white,
+    this.bodyBackground = AppColors.background,
+    this.navActiveBackground,
+    this.navActiveForeground,
+    this.avatarImage,
   });
 
   final String title;
@@ -45,6 +51,15 @@ class AppShell extends ConsumerWidget {
   final List<ShellDrawerSection> drawerSections;
   final Widget child;
   final String? notificationPath;
+
+  /// Top bar + bottom nav theming. Defaults keep the Phase-1 brand look;
+  /// the student role overrides with the SAGE student design tokens.
+  final Color appBarColor;
+  final Color appBarForeground;
+  final Color bodyBackground;
+  final Color? navActiveBackground;
+  final Color? navActiveForeground;
+  final ImageProvider? avatarImage;
 
   int _activeIndex(BuildContext context, String currentPath) {
     for (var i = 0; i < destinations.length; i++) {
@@ -60,12 +75,28 @@ class AppShell extends ConsumerWidget {
     final auth = ref.watch(authControllerProvider);
     final user = auth.user;
 
+    final avatarUrl = user?.avatarUrl;
+    final effectiveAvatar = avatarImage ??
+        (avatarUrl == null
+            ? null
+            : avatarUrl.startsWith('assets/')
+                ? AssetImage(avatarUrl)
+                : NetworkImage(avatarUrl));
+
     return Scaffold(
+      backgroundColor: bodyBackground,
       appBar: AppBar(
+        backgroundColor: appBarColor,
+        foregroundColor: appBarForeground,
+        titleTextStyle: TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.w700,
+          color: appBarForeground,
+        ),
         title: Text(title),
         actions: [
           IconButton(
-            icon: const Icon(Icons.search),
+            icon: Icon(Icons.search, color: appBarForeground),
             tooltip: 'Search',
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -74,10 +105,10 @@ class AppShell extends ConsumerWidget {
             },
           ),
           IconButton(
-            icon: const Badge(
+            icon: Badge(
               backgroundColor: AppColors.accent,
               smallSize: 9,
-              child: Icon(Icons.notifications_none),
+              child: Icon(Icons.notifications_none, color: appBarForeground),
             ),
             tooltip: 'Notifications',
             onPressed: () {
@@ -97,34 +128,62 @@ class AppShell extends ConsumerWidget {
             child: CircleAvatar(
               radius: 16,
               backgroundColor: Colors.white.withValues(alpha: 0.2),
-              child: Text(
-                user?.initials ?? 'S',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textOnPrimary,
-                ),
-              ),
+              backgroundImage: effectiveAvatar,
+              child: effectiveAvatar == null
+                  ? Text(
+                      user?.initials ?? 'S',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: appBarForeground,
+                      ),
+                    )
+                  : null,
             ),
           ),
         ],
       ),
       drawer: _SageDrawer(drawerSections: drawerSections),
       body: SafeArea(child: child),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _activeIndex(context, currentPath),
-        onDestinationSelected: (index) {
-          final path = destinations[index].path;
-          if (currentPath != path) context.go(path);
-        },
-        destinations: [
-          for (final d in destinations)
-            NavigationDestination(
-              icon: Icon(d.icon),
-              selectedIcon: Icon(d.selectedIcon ?? d.icon),
-              label: d.label,
-            ),
-        ],
+      bottomNavigationBar: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          backgroundColor: bodyBackground,
+          indicatorColor: navActiveBackground,
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return IconThemeData(
+              size: 24,
+              color: selected
+                  ? (navActiveForeground ?? AppColors.primary)
+                  : AppColors.textSecondary,
+            );
+          }),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return TextStyle(
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected
+                  ? (navActiveForeground ?? AppColors.primary)
+                  : AppColors.textSecondary,
+            );
+          }),
+        ),
+        child: NavigationBar(
+          selectedIndex: _activeIndex(context, currentPath),
+          onDestinationSelected: (index) {
+            final path = destinations[index].path;
+            if (currentPath != path) context.go(path);
+          },
+          destinations: [
+            for (final d in destinations)
+              NavigationDestination(
+                icon: Icon(d.icon),
+                selectedIcon: Icon(d.selectedIcon ?? d.icon),
+                label: d.label,
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -13,7 +13,20 @@ import '../features/auth/splash_screen.dart';
 import '../features/lecturer/lecturer_home_page.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/onboarding/sage_splash_screen.dart';
+import '../features/student/course_detail_page.dart';
+import '../features/student/quiz_in_progress_page.dart';
+import '../features/student/quiz_results_page.dart';
+import '../features/student/sage_assistant_page.dart';
+import '../features/student/student_analytics_page.dart';
+import '../features/student/student_courses_page.dart';
+import '../features/student/student_dashboard_page.dart';
+import '../features/student/student_error_pages.dart';
 import '../features/student/student_home_page.dart';
+import '../features/student/student_notifications_page.dart';
+import '../features/student/student_profile_page.dart';
+import '../features/student/student_settings_page.dart';
+import '../features/student/student_tasks_page.dart';
+import '../features/student/submit_assignment_page.dart';
 import 'router_helpers.dart';
 
 /// Role-aware router. Redirect rules:
@@ -87,9 +100,74 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // ---- Student area ----
       GoRoute(
         path: '/student/home',
-        builder: (context, state) => const StudentHomePage(),
+        builder: (context, state) => const StudentDashboardPage(),
       ),
-      for (final tab in studentTabs)
+      GoRoute(
+        path: '/student/courses',
+        builder: (context, state) => const StudentCoursesPage(),
+      ),
+      GoRoute(
+        path: '/student/tasks',
+        builder: (context, state) => const StudentTasksPage(),
+      ),
+      GoRoute(
+        path: '/student/analytics',
+        builder: (context, state) => const StudentAnalyticsPage(),
+      ),
+      GoRoute(
+        path: '/student/notifications',
+        builder: (context, state) => const StudentNotificationsPage(),
+      ),
+      GoRoute(
+        path: '/student/profile',
+        builder: (context, state) => const StudentProfilePage(),
+      ),
+      GoRoute(
+        path: '/student/settings',
+        builder: (context, state) => const StudentSettingsPage(),
+      ),
+      GoRoute(
+        path: '/student/assistant',
+        builder: (context, state) => const SageAssistantPage(),
+      ),
+      GoRoute(
+        path: '/student/course/:courseId',
+        builder: (context, state) =>
+            CourseDetailPage(courseId: state.pathParameters['courseId']!),
+      ),
+      GoRoute(
+        path: '/student/submit/:assignmentId',
+        builder: (context, state) => SubmitAssignmentPage(
+          assignmentId: state.pathParameters['assignmentId']!,
+        ),
+      ),
+      GoRoute(
+        path: '/student/quiz/:quizId',
+        builder: (context, state) =>
+            QuizInProgressPage(quizId: state.pathParameters['quizId']!),
+      ),
+      GoRoute(
+        path: '/student/quiz-results/:quizId',
+        builder: (context, state) =>
+            QuizResultsPage(quizId: state.pathParameters['quizId']!),
+      ),
+      GoRoute(
+        path: '/student/error/403',
+        builder: (context, state) => const Student403Page(),
+      ),
+      GoRoute(
+        path: '/student/error/404',
+        builder: (context, state) => const Student404Page(),
+      ),
+      GoRoute(
+        path: '/student/error/500',
+        builder: (context, state) => const StudentSystemErrorPage(),
+      ),
+      GoRoute(
+        path: '/student/loading',
+        builder: (context, state) => const StudentLoadingPage(),
+      ),
+      for (final tab in studentPlaceholderTabs)
         GoRoute(
           path: tab.path,
           builder: (context, state) =>

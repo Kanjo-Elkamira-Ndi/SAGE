@@ -34,28 +34,33 @@ class SageCard extends StatelessWidget {
       bottom: const BorderSide(color: AppColors.border, width: 1),
     );
 
-    final card = Container(
+    // A transparent Material hosts the child (and tap ripple), so ListTiles
+    // and ink splashes inside the card are always visible.
+    final body = Material(
+      color: Colors.transparent,
+      borderRadius: radius,
+      clipBehavior: Clip.antiAlias,
+      child: onTap != null
+          ? InkWell(
+              onTap: onTap,
+              child: Padding(
+                padding: padding ?? const EdgeInsets.all(16),
+                child: child,
+              ),
+            )
+          : Padding(
+              padding: padding ?? const EdgeInsets.all(16),
+              child: child,
+            ),
+    );
+
+    return Container(
       decoration: BoxDecoration(
         color: color ?? AppColors.background,
         borderRadius: radius,
         border: border,
       ),
-      child: Padding(
-        padding: padding ?? const EdgeInsets.all(16),
-        child: child,
-      ),
-    );
-
-    if (onTap == null) return card;
-
-    return Material(
-      color: Colors.transparent,
-      borderRadius: radius,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: radius,
-        child: card,
-      ),
+      child: body,
     );
   }
 }

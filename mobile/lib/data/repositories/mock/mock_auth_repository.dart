@@ -12,6 +12,7 @@ class MockAuthRepository implements AuthRepository {
     fullName: 'Alex Carter',
     role: Role.student,
     departmentName: 'Computer Science',
+    avatarUrl: 'assets/images/student/avatar_alex.jpg',
   );
 
   static const demoLecturer = User(

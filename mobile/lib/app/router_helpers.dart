@@ -7,15 +7,11 @@ class _Tab {
   final String title;
 }
 
-/// Student tab placeholder routes (Phase 3 replaces the bodies).
-const studentTabs = [
-  _Tab('/student/courses', 'Courses'),
-  _Tab('/student/quizzes', 'Quizzes'),
-  _Tab('/student/performance', 'Performance'),
-  _Tab('/student/notifications', 'Notifications'),
-  _Tab('/student/profile', 'Profile'),
-  _Tab('/student/settings', 'Settings'),
+/// Student routes that still render the placeholder body until built.
+const studentPlaceholderTabs = [
   _Tab('/student/help', 'Help'),
+  _Tab('/student/schedule', 'Schedule'),
+  _Tab('/student/grades', 'Grades'),
 ];
 
 /// Lecturer tab placeholder routes (Phase 4 replaces the bodies).

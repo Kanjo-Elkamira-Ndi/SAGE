@@ -108,9 +108,12 @@ void main() {
 
     await signInAsStudent(tester);
 
-    expect(find.text('Good morning, Alex!'), findsOneWidget);
-    expect(find.text('Academic Portal'), findsOneWidget);
+    expect(find.text('Here\u2019s what\u2019s happening today.'), findsOneWidget);
+    expect(find.text('SAGE'), findsWidgets);
+    expect(find.text('Dashboard'), findsOneWidget);
+    expect(find.text('Courses'), findsWidgets);
     expect(find.text('Active Courses'), findsOneWidget);
+    expect(find.text('Schedule Preview'), findsOneWidget);
   });
 
   testWidgets('invalid credentials surface the auth error', (tester) async {
@@ -193,5 +196,60 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Check your email'), findsOneWidget);
+  });
+
+  testWidgets('student can browse courses and open a course detail',
+      (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await tester.pump();
+
+    await signInAsStudent(tester);
+
+    final coursesNav = find.descendant(
+      of: find.byType(NavigationBar),
+      matching: find.text('Courses'),
+    );
+    await tester.tap(coursesNav);
+    await tester.pumpAndSettle();
+
+    expect(find.text('My Courses'), findsOneWidget);
+    expect(find.text('Advanced Algorithms & Data Structures'), findsOneWidget);
+
+    await tester.tap(find.text('Advanced Algorithms & Data Structures'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Syllabus'), findsOneWidget);
+
+    await tester.dragUntilVisible(
+      find.text('Course Feed'),
+      find.byType(ListView).last,
+      const Offset(0, -300),
+    );
+    expect(find.text('Course Feed'), findsOneWidget);
+  });
+
+  testWidgets('student tasks tab lists assignments with upload actions',
+      (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await tester.pump();
+
+    await signInAsStudent(tester);
+
+    final tasksNav = find.descendant(
+      of: find.byType(NavigationBar),
+      matching: find.text('Tasks'),
+    );
+    await tester.tap(tasksNav);
+    await tester.pumpAndSettle();
+
+    expect(find.text('UX Evaluation'), findsOneWidget);
+    expect(find.text('assignment_brief.pdf'), findsWidgets);
+
+    await tester.dragUntilVisible(
+      find.text('Quizzes'),
+      find.byType(ListView).last,
+      const Offset(0, -300),
+    );
+    expect(find.text('Quizzes'), findsOneWidget);
   });
 }
