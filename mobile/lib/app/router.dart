@@ -2,6 +2,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/auth_controller.dart';
+import '../features/auth/check_email_screen.dart';
+import '../features/auth/forgot_password_screen.dart';
+import '../features/auth/login_screen.dart';
+import '../features/auth/register_screen.dart';
+import '../features/auth/reset_link_expired_screen.dart';
+import '../features/auth/reset_password_screen.dart';
+import '../features/auth/reset_success_screen.dart';
 import '../features/auth/splash_screen.dart';
 import '../features/lecturer/lecturer_home_page.dart';
 import '../features/onboarding/onboarding_screen.dart';
@@ -21,14 +28,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final path = state.matchedLocation;
       final onLaunch = path == '/launch' || path == '/onboarding';
       final onSplash = path == '/splash';
+      final onAuth = path.startsWith('/auth');
+      final isPublic = onLaunch || onSplash || onAuth;
 
       switch (auth.status) {
         case AuthStatus.restoring:
         case AuthStatus.unauthenticated:
-          return (onLaunch || onSplash) ? null : '/splash';
+          return isPublic ? null : '/splash';
         case AuthStatus.authenticated:
           final role = auth.user!.role;
-          if (onLaunch || onSplash) return homeFor(role);
+          if (onLaunch || onSplash || onAuth) return homeFor(role);
           if (isRoleArea(role, path)) return null;
           return homeFor(role);
       }
@@ -45,6 +54,35 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/splash',
         builder: (context, state) => const SplashScreen(),
+      ),
+      // ---- Auth (public, pre-session) ----
+      GoRoute(
+        path: '/auth/login',
+        builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/auth/register',
+        builder: (context, state) => const RegisterScreen(),
+      ),
+      GoRoute(
+        path: '/auth/forgot-password',
+        builder: (context, state) => const ForgotPasswordScreen(),
+      ),
+      GoRoute(
+        path: '/auth/check-email',
+        builder: (context, state) => const CheckEmailScreen(),
+      ),
+      GoRoute(
+        path: '/auth/reset-password',
+        builder: (context, state) => const ResetPasswordScreen(),
+      ),
+      GoRoute(
+        path: '/auth/reset-link-expired',
+        builder: (context, state) => const ResetLinkExpiredScreen(),
+      ),
+      GoRoute(
+        path: '/auth/reset-success',
+        builder: (context, state) => const ResetSuccessScreen(),
       ),
       // ---- Student area ----
       GoRoute(

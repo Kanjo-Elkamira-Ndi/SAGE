@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/theme/sage_colors.dart';
 import '../../shared/widgets/sage_button.dart';
@@ -15,23 +16,12 @@ class SplashScreen extends ConsumerStatefulWidget {
 }
 
 class _SplashScreenState extends ConsumerState<SplashScreen> {
-  bool _busy = false;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(authControllerProvider.notifier).restore();
     });
-  }
-
-  Future<void> _previewRole(String email) async {
-    setState(() => _busy = true);
-    await ref.read(authControllerProvider.notifier).signIn(
-          email: email,
-          password: 'demo',
-        );
-    if (mounted) setState(() => _busy = false);
   }
 
   @override
@@ -109,7 +99,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                   const CircularProgressIndicator()
                 else ...[
                   const Text(
-                    'Preview with a demo account',
+                    'Access the academic portal',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -120,18 +110,16 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                   SageButton(
                     fullWidth: true,
                     size: SageButtonSize.large,
-                    isLoading: _busy,
-                    onPressed: () => _previewRole('student'),
-                    child: const Text('Continue as Student'),
+                    onPressed: () => context.push('/auth/login'),
+                    child: const Text('Login'),
                   ),
                   const SizedBox(height: 12),
                   SageButton(
                     fullWidth: true,
                     size: SageButtonSize.large,
                     variant: SageButtonVariant.outline,
-                    isLoading: _busy,
-                    onPressed: () => _previewRole('lecturer'),
-                    child: const Text('Continue as Lecturer'),
+                    onPressed: () => context.push('/auth/register'),
+                    child: const Text('Create Account'),
                   ),
                 ],
               ],

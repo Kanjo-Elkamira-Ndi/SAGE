@@ -52,6 +52,18 @@ class AuthController extends Notifier<AuthState> {
     return user;
   }
 
+  /// Creates an account without starting a session. Callers route to login.
+  Future<User> register({
+    required String fullName,
+    required String email,
+    required String password,
+    Role role = Role.student,
+  }) {
+    return ref
+        .read(authRepositoryProvider)
+        .register(fullName: fullName, email: email, password: password, role: role);
+  }
+
   Future<void> signOut() async {
     await ref.read(authRepositoryProvider).signOut();
     state = const AuthState.unauthenticated();

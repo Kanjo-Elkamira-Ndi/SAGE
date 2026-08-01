@@ -11,6 +11,16 @@ abstract interface class AuthRepository {
   /// Authenticates with email + password. Throws `SageAuthException` on failure.
   Future<User> signIn({required String email, required String password});
 
+  /// Creates a new account (student self-registration). Does not start a
+  /// session — the user signs in afterwards. Throws `SageAuthException` on
+  /// failure (duplicate email, invalid role, ...).
+  Future<User> register({
+    required String fullName,
+    required String email,
+    required String password,
+    Role role = Role.student,
+  });
+
   /// Ends the session and revokes tokens.
   Future<void> signOut();
 }

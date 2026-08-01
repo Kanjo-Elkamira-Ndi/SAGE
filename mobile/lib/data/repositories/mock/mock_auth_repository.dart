@@ -29,10 +29,44 @@ class MockAuthRepository implements AuthRepository {
     role: Role.admin,
   );
 
+  final Map<String, User> _registered = {
+    demoStudent.email: demoStudent,
+    demoLecturer.email: demoLecturer,
+    demoAdmin.email: demoAdmin,
+  };
+
   User? _session;
 
   @override
   Future<User?> currentUser() async => _session;
+
+  @override
+  Future<User> register({
+    required String fullName,
+    required String email,
+    required String password,
+    Role role = Role.student,
+  }) async {
+    final normalized = email.toLowerCase().trim();
+    if (normalized.isEmpty) {
+      throw const SageAuthException('Please enter your email address.');
+    }
+    if (password.isEmpty) {
+      throw const SageAuthException('Please enter a password.');
+    }
+    if (_registered.containsKey(normalized)) {
+      throw const SageAuthException('An account already exists for that email.');
+    }
+    final user = User(
+      id: 'u-${_registered.length + 1}-$normalized',
+      email: normalized,
+      fullName: fullName.trim().isEmpty ? 'New User' : fullName.trim(),
+      role: role,
+      departmentName: role == Role.student ? 'General Studies' : null,
+    );
+    _registered[normalized] = user;
+    return user;
+  }
 
   @override
   Future<User> signIn({required String email, required String password}) async {

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:mobile/app/app.dart';
 import 'package:mobile/app/theme/sage_colors.dart';
+import 'package:mobile/data/models/user.dart';
 
 /// Advances the fake clock far enough for the splash's 3s progress + 3.4s
 /// auto-navigation to fire, then pumps one more frame for the route swap.
@@ -28,6 +29,27 @@ Future<void> reachAuthGate(WidgetTester tester) async {
   await advanceOnboarding(tester, 'Next');
   await advanceOnboarding(tester, 'Get Started');
   await tester.pump(const Duration(milliseconds: 600));
+}
+
+/// Field finder by hint text (the login/register inputs are unlabeled).
+Finder fieldWithHint(String hint) => find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == hint,
+    );
+
+/// Opens the login screen from the auth gate and signs in as the demo student.
+Future<void> signInAsStudent(WidgetTester tester) async {
+  await reachAuthGate(tester);
+  await tester.pumpAndSettle();
+
+  await tester.tap(find.text('Login'));
+  await tester.pumpAndSettle();
+
+  await tester.enterText(fieldWithHint('name@university.edu'), 'student');
+  await tester.enterText(fieldWithHint('••••••••'), 'demo');
+  await tester.ensureVisible(find.text('Login'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Login'));
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -74,8 +96,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
     await tester.pumpAndSettle();
 
-    expect(find.text('Continue as Student'), findsOneWidget);
-    expect(find.text('Continue as Lecturer'), findsOneWidget);
+    expect(find.text('Continue as Student'), findsNothing);
+    expect(find.text('Login'), findsOneWidget);
+    expect(find.text('Create Account'), findsOneWidget);
   });
 
   testWidgets('signing in as student lands on the student shell',
@@ -83,14 +106,92 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: SageApp()));
     await tester.pump();
 
-    await reachAuthGate(tester);
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Continue as Student'));
-    await tester.pumpAndSettle();
+    await signInAsStudent(tester);
 
     expect(find.text('Good morning, Alex!'), findsOneWidget);
     expect(find.text('Academic Portal'), findsOneWidget);
     expect(find.text('Active Courses'), findsOneWidget);
+  });
+
+  testWidgets('invalid credentials surface the auth error', (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await tester.pump();
+
+    await reachAuthGate(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Login'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(fieldWithHint('name@university.edu'), 'nobody');
+    await tester.enterText(fieldWithHint('••••••••'), 'x');
+    await tester.ensureVisible(find.text('Login'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Login'));
+    await tester.pump();
+
+    expect(find.text('No account found for that email.'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('registering routes back to login after account creation',
+      (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await tester.pump();
+
+    await reachAuthGate(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Create Account'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create your account'), findsOneWidget);
+
+    await tester.enterText(fieldWithHint('e.g. Dr. Julian Rivers'), 'Jordan Lee');
+    await tester.enterText(
+        fieldWithHint('name@university.edu'), 'jordan.lee@student.sage.edu');
+    await tester.enterText(fieldWithHint('••••••••'), 'sage-password-1');
+
+    final roleField = find.byType(DropdownButtonFormField<Role>);
+    await tester.ensureVisible(roleField);
+    await tester.pumpAndSettle();
+    await tester.tap(roleField);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Student').last);
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Register'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Register'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Login to your account'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('forgot password leads to the check-email state',
+      (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await tester.pump();
+
+    await reachAuthGate(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Login'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Forgot Password?'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Forgot Password?'), findsOneWidget);
+
+    await tester.enterText(fieldWithHint('name@university.edu'), 'alex@edu.com');
+    await tester.ensureVisible(find.text('Send Reset Link'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send Reset Link'));
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Check your email'), findsOneWidget);
   });
 }

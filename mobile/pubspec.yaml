@@ -61,6 +61,7 @@ flutter:
 
   assets:
     - assets/images/onboarding/
+    - assets/images/auth/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
