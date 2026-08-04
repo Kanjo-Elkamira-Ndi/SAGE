@@ -6,7 +6,7 @@ import {
   CalendarDays,
   Download,
   UserPlus,
-  BookOpenPlus,
+  BookOpen,
   CircleAlert,
   Megaphone,
   ShieldCheck,
@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { PageHeader, StatCard } from "../components/ui";
+import { PageHeader, StatCard } from "@/features/admin/components/ui";
 import { ProgressBar, LineChart } from "@/components/ui/Chart";
 import {
   dashboardStats,
@@ -23,11 +23,11 @@ import {
   recentActivity,
   departmentHealth,
   type ActivityItem,
-} from "../data";
+} from "@/features/admin/data";
 
 const activityIcon = {
   person_add: UserPlus,
-  library_add: BookOpenPlus,
+  library_add: BookOpen,
   report: CircleAlert,
   campaign: Megaphone,
   shield: ShieldCheck,

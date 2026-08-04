@@ -11,6 +11,22 @@ import CheckEmailPage from "@/app/auth/CheckEmailPage";
 import ResetPasswordPage from "@/app/auth/ResetPasswordPage";
 import ResetSuccessPage from "@/app/auth/ResetSuccessPage";
 import ResetExpiredPage from "@/app/auth/ResetExpiredPage";
+import AdminLayout from "@/app/admin/AdminLayout";
+import AdminDashboardPage from "@/app/admin/DashboardPage";
+import UsersPage from "@/app/admin/UsersPage";
+import DepartmentsPage from "@/app/admin/DepartmentsPage";
+import CoursesPage from "@/app/admin/CoursesPage";
+import CourseFormPage from "@/app/admin/CourseFormPage";
+import ActivityLogsPage from "@/app/admin/ActivityLogsPage";
+import ReportsPage from "@/app/admin/ReportsPage";
+import AtRiskPage from "@/app/admin/AtRiskPage";
+import PermissionsPage from "@/app/admin/PermissionsPage";
+import AnnouncementsPage from "@/app/admin/AnnouncementsPage";
+import LoadingStatePage from "@/app/admin/LoadingStatePage";
+import EmptyStatesPage from "@/app/admin/EmptyStatesPage";
+import NotFoundPage from "@/app/admin/NotFoundPage";
+import AccessDeniedPage from "@/app/admin/AccessDeniedPage";
+import ServerErrorPage from "@/app/admin/ServerErrorPage";
 
 export const router = createBrowserRouter([
   {
@@ -30,4 +46,28 @@ export const router = createBrowserRouter([
   { path: "/reset-password", element: <ResetPasswordPage /> },
   { path: "/reset-success", element: <ResetSuccessPage /> },
   { path: "/reset-expired", element: <ResetExpiredPage /> },
+  {
+    path: "/admin",
+    element: <AdminLayout />,
+    children: [
+      { index: true, element: <AdminDashboardPage /> },
+      { path: "users", element: <UsersPage /> },
+      { path: "departments", element: <DepartmentsPage /> },
+      { path: "courses", element: <CoursesPage /> },
+      { path: "courses/new", element: <CourseFormPage /> },
+      { path: "courses/:courseId", element: <CourseFormPage /> },
+      { path: "announcements", element: <AnnouncementsPage /> },
+      { path: "activity", element: <ActivityLogsPage /> },
+      { path: "reports", element: <ReportsPage /> },
+      { path: "reports/at-risk", element: <AtRiskPage /> },
+      { path: "permissions", element: <PermissionsPage /> },
+      { path: "states/loading", element: <LoadingStatePage /> },
+      { path: "states/empty", element: <EmptyStatesPage /> },
+      { path: "settings", element: <EmptyStatesPage /> },
+      { path: "*", element: <NotFoundPage /> },
+    ],
+  },
+  { path: "/admin/403", element: <AccessDeniedPage /> },
+  { path: "/admin/500", element: <ServerErrorPage /> },
+  { path: "*", element: <NotFoundPage /> },
 ]);

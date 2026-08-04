@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { Menu, Search, Bell, HelpCircle, AppWindow } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar } from "@/features/admin/components/Sidebar";
 import { Avatar } from "@/components/ui/Avatar";
 import { fadeIn } from "@/lib/motion";
 

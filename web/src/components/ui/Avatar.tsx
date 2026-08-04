@@ -10,12 +10,6 @@ const palette = [
   "bg-[#5B6C8A]",
 ] as const;
 
-export function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
 interface AvatarProps extends React.HTMLAttributes<HTMLDivElement> {
   name: string;
   size?: "sm" | "md" | "lg";
@@ -32,6 +26,11 @@ export function Avatar({ name, size = "md", className, ...props }: AvatarProps) 
     .split("")
     .reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const color = palette[hash % palette.length];
+  const parts = name.trim().split(/\s+/);
+  const initials =
+    parts.length === 1
+      ? parts[0].slice(0, 2).toUpperCase()
+      : (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 
   return (
     <div
@@ -44,7 +43,7 @@ export function Avatar({ name, size = "md", className, ...props }: AvatarProps) 
       )}
       {...props}
     >
-      {initialsOf(name)}
+      {initials}
     </div>
   );
 }

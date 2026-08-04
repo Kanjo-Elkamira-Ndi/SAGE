@@ -13,7 +13,7 @@ const tones: Record<StatusTone, string> = {
   info: "bg-admin-royal-soft/60 text-admin-royal border border-admin-royal-soft",
 };
 
-export function statusTone(status: string): StatusTone {
+function statusTone(status: string): StatusTone {
   const s = status.toLowerCase();
   if (s.includes("active") || s.includes("healthy") || s.includes("open")) return "active";
   if (s.includes("registration") || s.includes("pending") || s.includes("warning")) return "warning";

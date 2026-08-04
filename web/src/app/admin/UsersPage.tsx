@@ -25,9 +25,9 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/Table";
-import { PageHeader } from "../components/ui";
-import { StatusBadge } from "../components/badges";
-import { users, userKpis, departments, type AppUser, type UserRole } from "../data";
+import { PageHeader } from "@/features/admin/components/ui";
+import { StatusBadge } from "@/features/admin/components/badges";
+import { users, userKpis, departments, type AppUser, type UserRole } from "@/features/admin/data";
 
 const roleChip = {
   Admin: "bg-admin-royal-soft text-admin-royal",

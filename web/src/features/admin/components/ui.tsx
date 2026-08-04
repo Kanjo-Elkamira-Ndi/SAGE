@@ -38,8 +38,6 @@ export interface StatCardProps {
   icon: React.ReactNode;
   trend?: { text: string; tone?: "positive" | "neutral" | "warning" };
   iconChipClass?: string;
-  iconToneClass?: string;
-  className?: string;
 }
 
 export function StatCard({
@@ -48,7 +46,6 @@ export function StatCard({
   icon,
   trend,
   iconChipClass = "bg-admin-royal-soft text-admin-royal",
-  className,
 }: StatCardProps) {
   const toneClass =
     trend?.tone === "positive"

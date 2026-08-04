@@ -1,4 +1,3 @@
-import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /* ============================================================
@@ -219,7 +218,11 @@ export function DonutChart({
   const total = data.reduce((acc, d) => acc + d.value, 0) || 1;
   const r = (size - thickness) / 2;
   const c = 2 * Math.PI * r;
-  let acc = 0;
+  const segments = data.reduce<number[]>((acc, _d, i) => {
+    const prev = i === 0 ? 0 : acc[i - 1] + data[i - 1].value / total;
+    acc.push(prev);
+    return acc;
+  }, []);
 
   return (
     <div className={cn("relative inline-flex", className)} style={{ width: size, height: size }}>
@@ -232,10 +235,9 @@ export function DonutChart({
           stroke="#E8E7EE"
           strokeWidth={thickness}
         />
-        {data.map((d) => {
+        {data.map((d, i) => {
           const len = (d.value / total) * c;
-          const dashOffset = -acc;
-          acc += len;
+          const dashOffset = -segments[i] * c;
           return (
             <circle
               key={d.label}
