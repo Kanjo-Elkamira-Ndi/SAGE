@@ -29,6 +29,21 @@
   --color-danger: #C0362C;
   --color-info: #3B5FCC;
 
+  /* === Admin Console surfaces (from SAGE admin reference) === */
+  --color-admin-bg: #FAF8FF;
+  --color-admin-surface: #FFFFFF;
+  --color-admin-container-low: #F4F3F9;
+  --color-admin-container-high: #E8E7EE;
+  --color-admin-outline: #E3E2E8;
+  --color-admin-text-muted: #757682;
+  --color-admin-royal: #00236F;
+  --color-admin-royal-hover: #16306F;
+  --color-admin-royal-soft: #DCE1FF;
+  --color-admin-gold: #FFC641;
+  --color-admin-gold-dark: #B8890F;
+  --color-admin-gold-soft: #FFDFA0;
+  --color-admin-danger-soft: #FFDAD6;
+
   /* === Typography === */
   --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 
