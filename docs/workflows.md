@@ -11,7 +11,7 @@
 
 1. Lecturer uploads a new PDF for an existing course topic.
 2. Frontend requests signed upload URL → uploads directly to Supabase Storage.
-3. Frontend finalizes via `POST /materials` (first version) or `PATCH /materials/:id` (new version of existing material).
+3. Frontend finalizes via `POST /materials` (first version) or `POST /materials/:id/versions` (new version of existing material).
 4. On update: API inserts a new `materials` row with `version + 1`, sets prior row `is_current = false`, links via `replaces_material_id`.
 5. API creates a `new_material` notification for all enrolled students.
 

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { logger } from './lib/logger';
 import { authRoutes } from './modules/auth/auth.routes';
+import { adminCourseRoutes, courseRoutes } from './modules/courses/courses.routes';
+import { materialRoutes } from './modules/materials/materials.routes';
 
 export const apiRouter = Router();
 
@@ -11,6 +13,6 @@ apiRouter.get('/ping', (_req, res) => {
 });
 
 apiRouter.use('/auth', authRoutes);
-
-// Feature modules mount here in later phases, e.g.:
-// apiRouter.use('/courses', courseRoutes);
+apiRouter.use('/courses', courseRoutes);
+apiRouter.use('/materials', materialRoutes);
+apiRouter.use('/admin/courses', adminCourseRoutes);

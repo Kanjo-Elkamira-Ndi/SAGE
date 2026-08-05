@@ -53,11 +53,11 @@ All responses follow:
 
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
-| GET | `/courses/:id/materials` | enrolled student/lecturer | List current materials |
+| GET | `/courses/:id/materials` | enrolled student/owning lecturer | List current materials |
 | POST | `/materials/upload-url` | lecturer | Request signed Supabase upload URL |
 | POST | `/materials` | lecturer | Finalize material record after upload |
-| PATCH | `/materials/:id` | owning lecturer | Upload new version (creates new row, marks old `is_current=false`) |
-| GET | `/materials/:id/download-url` | enrolled student | Signed short-lived download URL |
+| POST | `/materials/:id/versions` | owning lecturer | Upload new version (creates new row, marks old `is_current=false`) |
+| GET | `/materials/:id/download-url` | enrolled student/owning lecturer/admin | Signed short-lived download URL |
 
 ## Assignments & Submissions
 

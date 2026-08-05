@@ -6,6 +6,7 @@ Execution plan for the Express API in `api/`. Build order mirrors `backend-roadm
 
 - **Phase 0 (Scaffold & Infra) — complete & verified:** build passes, `001_init.sql` migration applied (18 tables incl. `exams` + indexes), seed (4 departments + `admin@sage.app`), `/health` 200 with DB check, `/v1/ping` 200, 404 envelope, 6 vitest tests green.
 - **Phase 1 (Auth & RBAC) — complete & verified:** all 7 auth endpoints implemented, migration `002_add-password-reset-tokens.sql` applied, 23 vitest tests green, full curl lifecycle (register → login → me → refresh rotation/reuse-detection → logout → forgot/reset) verified. Details in the Phase 1 section below.
+- **Phase 2 (Courses, Enrollment, Materials) — complete & verified:** courses + materials modules implemented against local Postgres and live Supabase Storage (signed upload/download), 38 vitest tests green, full curl lifecycle (create course → enroll → signed upload → finalize → version bump → download, plus RBAC denials) verified end-to-end. Details in the Phase 2 section below.
 - Design docs are the source of truth: `database-schema.md`, `api-reference.md`, `backend-roadmap.md`, `architecture.md`, `security.md`, `workflows.md`.
 - Frontends are not wired yet: `web/src/lib/apiClient.ts` is empty; the admin console runs on mocks (`web/src/features/admin/data.ts`); `mobile/` has no HTTP layer. No Clerk anywhere — custom JWT auth per `security.md`. The auth API contract already matches the mobile `AuthRepository` / `User.fromApi` shapes and the web auth screens.
 
@@ -85,15 +86,35 @@ Implemented (`src/modules/auth/`):
 
 **Gate (verified):** curl lifecycle all green — student register 201 (no session) / lecturer register `pendingApproval:true`; duplicate email 409 `EMAIL_TAKEN`; weak password 400 `VALIDATION_ERROR`; login 200 + `Set-Cookie` refresh; `/auth/me` 200 / 401 missing / 401 invalid; pending login 403 `USER_DEACTIVATED`; wrong password 401; refresh rotation 200; old-token reuse 401 `AUTH_TOKEN_REUSED` + all sessions revoked; logout revokes; forgot-password 200 (dev token, unknown email no-enumeration); reset-password 200 → single-use 400 `RESET_TOKEN_USED` → login with new password 200 / old password 401.
 
-## Phase 2 — Courses, Enrollment, Materials
+## Phase 2 — Courses, Enrollment, Materials — ✅ DONE
 
-- Course CRUD: `POST /courses` (lecturer/admin), `PATCH /courses/:id` (owner/admin), `GET /courses` (student: enrolled only; lecturer: owned; admin: all via `/admin/courses`), `GET /courses/:id` (detail + outline), `POST /courses/:id/enroll` (self-enroll if open).
-- `src/lib/storage.ts` — signed upload/download URL helpers against Supabase Storage (private buckets); MIME allowlist (`pdf`, `pptx`, `ppt`, `md`/`txt`) and size limits enforced server-side at URL issuance.
-- Materials: `POST /materials/upload-url`, `POST /materials` (finalize, version 1), `PATCH /materials/:id` (insert new row, `version+1`, flip old `is_current=false`, set `replaces_material_id`), `GET /materials/:id/download-url`.
-- `new_material` notifications for enrolled students.
+Implemented (`src/modules/courses/`, `src/modules/materials/`):
 
-**Needs from user:** Supabase project URL + service role key (Storage phase).
-**Gate:** version history preserved after update; non-enrolled student gets `NOT_ENROLLED`/`NOT_FOUND`.
+- **Course module:** `courses.schema.ts` (zod create/update — `code` normalized uppercase, `departmentId` uuid), `courses.service.ts` (scoped lists: student → enrolled only, lecturer → owned, admin → all via `/admin/courses`; detail + outline; ownership checks server-side; `COURSE_CODE_TAKEN` 409 on code dupes), `courses.controller.ts` / `courses.routes.ts` (routes below). Enrollment inserts an `enrollments` row (`status='active'`); re-enroll → `ALREADY_ENROLLED` 409.
+- **Storage:** `src/lib/storage.ts` — signed upload/download helpers against Supabase Storage (`POST /object/upload/sign/…` for upload, `POST /object/sign/…` for download). MIME allowlist (`application/pdf`, PPTX variants, `text/markdown`, `text/plain`) mapped to `materials.type` (`pdf|pptx|notes`), 50 MB cap, random UUID key paths, service role key never leaves the server.
+- **Materials:** `POST /materials/upload-url` (lecturer, verifies course ownership + mime/size), `POST /materials` finalize (verifies the object actually exists in storage before inserting the row — `MATERIAL_FILE_MISSING` otherwise), `POST /materials/:id/versions` (new row `version+1`, old row `is_current=false`, `replaces_material_id` chain, transactional), `GET /materials/:id/download-url` (enrolled student / owning lecturer / admin; short-lived signed URL). Upload flow sends the file bytes **directly from the client to Supabase** using the signed URL — bytes never pass through the API.
+- **Notifications:** every material create/version emits a `new_material` notification row for all active enrolled students (lecturer name in the body). Activity logging on all mutating actions.
+- **Pagination:** `src/lib/pagination.ts` — `?page=&limit=` (default 20) on all list endpoints.
+
+**Routes:**
+
+| Method | Endpoint | Role |
+|---|---|---|
+| GET | `/courses` | student (enrolled) / lecturer (owned) |
+| GET | `/courses/:id` | enrolled student / owning lecturer / admin |
+| POST | `/courses` | lecturer/admin |
+| PATCH | `/courses/:id` | owning lecturer/admin |
+| POST | `/courses/:id/enroll` | student |
+| GET | `/admin/courses` | admin |
+| GET | `/courses/:id/materials` | enrolled student / owning lecturer / admin |
+| POST | `/materials/upload-url` | lecturer |
+| POST | `/materials` | lecturer |
+| POST | `/materials/:id/versions` | owning lecturer |
+| GET | `/materials/:id/download-url` | enrolled student / owning lecturer / admin |
+
+**Gate (verified):** full curl lifecycle green — lecturer creates course → student enrolls (re-enroll 409) → signed upload URL (anon-key PUT 200) → finalize 201 (bogus key 400 `MATERIAL_FILE_MISSING`) → student lists + downloads (bytes match) → new version (old row `is_current=false`, list shows only v2, v2 bytes match) → notifications/activity rows written. RBAC denials: student creates course 403 `FORBIDDEN_ROLE`, lecturer enrolls 403, non-enrolled student course detail/materials/download 403 `NOT_ENROLLED`. Cleaned up after verification (bucket + DB). Storage runs against live Supabase project `gczxybqncbqdxfzmznvg` (bucket `materials`, private).
+
+**Deviation from the draft contract:** new-version route is `POST /materials/:id/versions` (not `PATCH /materials/:id`) since a version is a *new row*, not a field update — `api-reference.md` and `workflows.md` updated to match. Download URL access extended to owning lecturers/admins.
 
 ## Phase 3 — Assignments, Exams & Submissions
 
@@ -193,8 +214,10 @@ FRONTEND_URL=http://localhost:5173
 # SMTP_USER=
 # SMTP_PASS=
 # SMTP_FROM=SAGE <no-reply@sage.app>
-# SUPABASE_URL=               # needed Phase 2 (Storage)
-# SUPABASE_SERVICE_ROLE_KEY=  # needed Phase 2 (Storage)
+SUPABASE_URL=https://<project-ref>.supabase.co   # used since Phase 2 (Storage)
+SUPABASE_ANON_KEY=<publishable key>              # safe for frontends
+SUPABASE_SERVICE_ROLE_KEY=<secret key>           # server-side ONLY
+SUPABASE_STORAGE_BUCKET=materials
 # GROQ_API_KEY=               # needed Phase 5 (AI)
 ```
 

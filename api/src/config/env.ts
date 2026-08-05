@@ -12,7 +12,9 @@ const envSchema = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:3000'),
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
   SUPABASE_URL: z.string().optional(),
+  SUPABASE_ANON_KEY: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  SUPABASE_STORAGE_BUCKET: z.string().default('materials'),
   GROQ_API_KEY: z.string().optional(),
 });
 
