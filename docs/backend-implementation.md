@@ -1,0 +1,203 @@
+# SAGE — API Implementation Plan
+
+Execution plan for the Express API in `api/`. Build order mirrors `backend-roadmap.md`; the schema and endpoint contracts live in `database-schema.md` and `api-reference.md`. This plan is the working checklist for implementation.
+
+## Current State
+
+- `api/` is empty scaffolding — every `.ts` file is 0 lines (app, server, auth module, middleware, lib, jobs, config), `package.json` is the npm default, `tsconfig.json` and `.env.example` are empty.
+- Design docs are complete and are the source of truth: `database-schema.md`, `api-reference.md`, `backend-roadmap.md`, `architecture.md`, `security.md`, `workflows.md`.
+- Frontends are not wired yet: `web/src/lib/apiClient.ts` is empty; the admin console runs on mocks (`web/src/features/admin/data.ts`); `mobile/` has no HTTP layer. No Clerk anywhere — custom JWT auth per `security.md`.
+
+## Locked Decisions
+
+1. **Videos**: excluded from v1. `materials.type` stays `enum('pdf','pptx','notes')`. Video (mp4/webm, transcoding, CDN) is a post-v1 extension.
+2. **Exams**: a first-class `exams` entity — new table, lecturer CRUD, automated reminders in the cron. Reuses the `deadline_reminder` notification type with `related_entity_type='exam'` (no enum churn).
+3. **Tests**: Vitest for pure logic (risk scoring, Zod schemas, auth/refresh helpers, cron idempotency) + Postman/curl gates per phase.
+4. **Dev database**: local Postgres, managed in DBeaver. Migrations run via `node-pg-migrate` CLI; DBeaver is for inspection only, never hand-edits.
+5. **Base path**: all routes mounted under `/v1` (per `api-reference.md`). Ignore the `/api/...` prefix shown in a few `architecture.md` examples — `/v1` is canonical.
+6. **Auth**: custom JWT (access 15 min in-memory + rotating, hashed refresh token in `httpOnly` cookie on the API origin), per `security.md`. No Clerk.
+
+## Requirements → Design Mapping
+
+| Requirement | Design |
+|---|---|
+| Create courses, upload PDFs/PPTX/notes, update materials | `courses`, `materials` + versioning (new row, `is_current` flip, `replaces_material_id`) |
+| Student: view enrolled courses, download materials, view outlines | `/courses` scoped list, `/courses/:id/materials`, signed download URLs |
+| Assignments, deadlines, grading, feedback | `assignments`, `submissions`, `submission_history` |
+| Quizzes, instant results, auto-grading | `quizzes`, `quiz_questions`, `quiz_attempts` — server-side grading only |
+| GPA, quiz/assignment perf, charts, current vs previous | `performance_snapshots` (precomputed; diff two rows) |
+| At-risk prediction | deterministic rule-based risk score (`workflows.md`), AI narration strictly downstream |
+| Assignment/quiz reminders, new-material alerts, AI study reminders | `notifications`, `notifications_sent` idempotency + node-cron |
+| **Examination reminders** | new `exams` table + CRUD + cron reminder |
+| Admin: users, departments, activity monitor, reports, permissions | `/admin/*` endpoints, `activity_logs`, `permissions` table |
+
+---
+
+## Phase 0 — Scaffold & Infra
+
+**Dependencies (prod):** `express`, `pg`, `zod`, `argon2`, `jsonwebtoken`, `cors`, `helmet`, `node-cron`, `dotenv`.
+**Dependencies (dev):** `typescript`, `tsx` (dev runner), `vitest`, `node-pg-migrate`, `@types/express`, `@types/jsonwebtoken`, `@types/node`, `@types/cors`.
+
+**Files to fill:**
+- `package.json` — real scripts: `dev` (tsx watch), `build` (tsc), `start`, `test` (vitest), `migrate:up` / `migrate:down` (node-pg-migrate).
+- `tsconfig.json` — strict, `module: commonjs` (matches `"type": "commonjs"`), `outDir: dist`.
+- `src/config/env.ts` — zod-validated env (fail fast): `PORT`, `DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `CORS_ORIGINS`, plus later `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`.
+- `src/config/db.ts` — `pg.Pool` from `DATABASE_URL`.
+- `src/lib/logger.ts` — structured request logger.
+- `src/middleware/errorHandler.ts` — centralized handler returning `{ success, error }` shape.
+- `src/middleware/validate.ts` — Zod schema wrapper.
+- `src/middleware/auth.ts` / `requireRole.ts` — JWT verify + role check (used from Phase 1 onward).
+- `src/app.ts` — helmet, cors allowlist, `GET /health`, mount `/v1` router.
+- `src/server.ts` — listen + pool connect check.
+
+**Migrations:** `001_init.sql` (via node-pg-migrate) for all tables + indexes (see `database-schema.md`) **including new `exams` table**:
+
+```sql
+CREATE TABLE exams (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  course_id     uuid NOT NULL REFERENCES courses(id),
+  created_by    uuid NOT NULL REFERENCES users(id),
+  title         text NOT NULL,
+  scheduled_at  timestamptz NOT NULL,
+  duration_minutes int,
+  venue         text,
+  instructions  text
+);
+```
+
+Indexes: `exams(course_id)`, `exams(scheduled_at)`.
+
+**Seed script (dev only):** departments, an admin user, sample courses.
+
+**Gate:** `npm run build` passes; `GET /health` returns 200; migrations apply cleanly against `sage`.
+
+## Phase 1 — Auth & RBAC
+
+- `src/modules/auth/auth.schema.ts` — zod: register, login, refresh.
+- `auth.service.ts` — argon2 hashing; JWT issue (15-min access); refresh token = random value, **sha256 hash stored** in `refresh_tokens`; rotation + reuse detection (revoke-all-sessions on reuse); logout revoke.
+- `auth.controller.ts` / `auth.routes.ts` — `POST /auth/register|login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`.
+- `middleware/auth.ts` — verify Bearer, load user, reject if `is_active = false`.
+- `middleware/requireRole.ts` — `requireRole('student','lecturer','admin')`; ownership helpers (`requireCourseOwner`) in service layer.
+- Activity logs on login / logout / failed login.
+
+**Gate:** Postman flow register → login → me → refresh → logout; cross-role endpoint rejection returns `FORBIDDEN_ROLE`; deactivated user cannot log in.
+
+## Phase 2 — Courses, Enrollment, Materials
+
+- Course CRUD: `POST /courses` (lecturer/admin), `PATCH /courses/:id` (owner/admin), `GET /courses` (student: enrolled only; lecturer: owned; admin: all via `/admin/courses`), `GET /courses/:id` (detail + outline), `POST /courses/:id/enroll` (self-enroll if open).
+- `src/lib/storage.ts` — signed upload/download URL helpers against Supabase Storage (private buckets); MIME allowlist (`pdf`, `pptx`, `ppt`, `md`/`txt`) and size limits enforced server-side at URL issuance.
+- Materials: `POST /materials/upload-url`, `POST /materials` (finalize, version 1), `PATCH /materials/:id` (insert new row, `version+1`, flip old `is_current=false`, set `replaces_material_id`), `GET /materials/:id/download-url`.
+- `new_material` notifications for enrolled students.
+
+**Needs from user:** Supabase project URL + service role key (Storage phase).
+**Gate:** version history preserved after update; non-enrolled student gets `NOT_ENROLLED`/`NOT_FOUND`.
+
+## Phase 3 — Assignments, Exams & Submissions
+
+- Assignment CRUD: `GET /courses/:id/assignments`, `POST /assignments`, `PATCH /assignments/:id`.
+- **Exam CRUD:** `GET /courses/:id/exams`, `POST /exams`, `PATCH /exams/:id` (owning lecturer/admin).
+- Submissions: `POST /submissions/upload-url` (checks enrollment + deadline, sets `is_late`), `POST /submissions` (finalize; UNIQUE per student; resubmit appends `submission_history`), `GET /assignments/:id/submissions` (lecturer), `PATCH /submissions/:id/grade` (score + feedback → `feedback` notification).
+
+**Gate:** late flag correct; submission blocked after deadline when late disallowed; grade triggers student notification.
+
+## Phase 4 — Quizzes
+
+- Quiz CRUD + questions: `GET /courses/:id/quizzes`, `POST /quizzes`, `PATCH /quizzes/:id`.
+- Attempts: `POST /quizzes/:id/start` (window + `time_limit_minutes` check against `started_at`), `POST /quizzes/:id/submit` — **server-side grading** against `correct_answer` (never trust client scores), `GET /quizzes/:id/results` (own result).
+
+**Gate:** auto-graded score matches manually verified expected score; availability window enforced server-side.
+
+## Phase 5 — Groq AI Quiz Generation
+
+- `src/lib/groq.ts` — single wrapper, key server-side only.
+- `POST /quizzes/generate` — extract text from a material (PDF parsing lib), prompt Groq with strict JSON-schema instructions, validate/parse with zod, return **draft questions for lecturer review**. Never auto-publish; publish only via `PATCH /quizzes/:id` after explicit approval, set `ai_generated = true`.
+- Rate-limit this endpoint (Groq calls cost money).
+
+**Needs from user:** Groq API key.
+**Gate:** generate → review → edit → publish flow; malformed AI output is rejected/retried, never shown raw.
+
+## Phase 6 — Performance Tracking
+
+- `performance_snapshots` table (already in `001_init.sql`).
+- Pure, unit-tested risk module implementing the `workflows.md` formula (weighted GPA trend, missed-submission rate, quiz decline, engagement; thresholds 0.66/0.33). **Vitest unit tests.**
+- Snapshot triggers: weekly cron + on-demand recompute after a grade is finalized.
+- Endpoints: `GET /performance/me`, `GET /performance/me/risk`, `GET /performance/course/:id` (lecturer), `GET /admin/performance/at-risk` (admin/lecturer).
+- AI narration of risk (plain-language explanation) is **display-only**, never written back into scores.
+
+**Gate:** risk-score unit tests pass; snapshot diff gives a clean current-vs-previous comparison.
+
+## Phase 7 — Notifications & Cron
+
+- `src/jobs/scheduler.ts` + jobs: `deadlineReminders.job.ts`, `studyPlan.job.ts`, `performanceSnapshot.job.ts`.
+- Hourly: scan `assignments`, `quizzes`, and **`exams`** for deadlines in the reminder window (48h / 24h / 2h); write `notifications` rows + `notifications_sent` (UNIQUE `user_id, event_type, event_ref_id`) to prevent duplicates.
+- Daily: personalized AI study-plan notifications from latest `performance_snapshots` (Groq narration), idempotency-checked per day.
+- Announcements: `POST /announcements` (course-scoped or system-wide), `GET /notifications` (paginated), `PATCH /notifications/:id/read`.
+
+**Gate:** a reminder never fires twice for the same event; reminders fire within the window for all three entity types.
+
+## Phase 8 — Admin Module
+
+Response shapes matched to the admin console mocks (`web/src/features/admin/data.ts`) so the mock → API swap is drop-in.
+
+- `GET/POST /admin/users`, `PATCH/DELETE /admin/users/:id` (role change, deactivate/soft delete).
+- `GET/POST /admin/departments`.
+- `GET /admin/courses` (all courses, any department).
+- `GET /admin/activity-logs` (filters: user, action, date range).
+- `GET /admin/reports/overview` (user counts, course counts, submission rates) + `GET /admin/reports/export` (CSV first, PDF later).
+- `GET /admin/performance/at-risk` (from Phase 6 — same deterministic scoring as student-facing views).
+- `permissions` table wired for any beyond-role access control if needed.
+
+**Gate:** admin flows pass against the same shapes the admin console already renders.
+
+## Phase 9 — Hardening
+
+- Rate limiting (`express-rate-limit`) on `/auth/login`, `/auth/register`, `/quizzes/generate` (e.g. 10 req/15 min per IP on auth).
+- Full validation audit — zod schemas on every body, no unchecked inputs.
+- `npm audit` clean; security.md pre-launch checklist verified.
+- Load-check the notification cron against realistic enrollment volume.
+
+**Gate:** `security.md` §10 checklist all green.
+
+---
+
+## Cross-Cutting (apply throughout)
+
+- Every mutating endpoint writes an `activity_logs` entry.
+- Enrollment/ownership checked **server-side** on every gated resource — never rely on hidden UI.
+- Consistent `{ success, data }` / `{ success, error }` response shape from Phase 0.
+- All list endpoints support `?page=&limit=` (default `limit=20`).
+- File bytes never pass through the API — always the signed-URL pattern.
+- All SQL parameterized (`$1, $2…`); no string-concatenated queries.
+
+## Test Strategy
+
+- **Vitest unit tests** for pure logic: risk scoring, Zod schemas, auth/refresh helpers, cron idempotency, signed-URL builders. Located alongside modules (`*.test.ts`).
+- **Postman/curl gates** per phase (listed above) for endpoint-level verification.
+
+## Environment & Prerequisites
+
+`api/.env` (git-ignored) — `.env.example` holds placeholders only:
+
+```env
+PORT=4000
+DATABASE_URL=postgresql://postgresql:codex4587@localhost:5432/sage
+JWT_ACCESS_SECRET=<random>
+JWT_REFRESH_SECRET=<random distinct>
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+# SUPABASE_URL=            # needed Phase 2 (Storage)
+# SUPABASE_SERVICE_ROLE_KEY=  # needed Phase 2 (Storage)
+# GROQ_API_KEY=            # needed Phase 5 (AI)
+```
+
+## Milestones
+
+- **M1** = Phases 0–4 (student/lecturer core: auth, courses, materials, assignments/exams, quizzes)
+- **M2** = Phases 5–7 (AI quiz generation, performance tracking, notifications)
+- **M3** = Phases 8–9 (admin module + hardening)
+
+## Post-v1 Backlog
+
+- Video materials (transcoding, CDN, storage cost review).
+- PDF report export (after CSV).
+- BullMQ + Redis if AI workloads grow.
+- Cloudflare R2 if file volume outgrows Supabase Storage.
