@@ -7,6 +7,8 @@ Execution plan for the Express API in `api/`. Build order mirrors `backend-roadm
 - **Phase 0 (Scaffold & Infra) — complete & verified:** build passes, `001_init.sql` migration applied (18 tables incl. `exams` + indexes), seed (4 departments + `admin@sage.app`), `/health` 200 with DB check, `/v1/ping` 200, 404 envelope, 6 vitest tests green.
 - **Phase 1 (Auth & RBAC) — complete & verified:** all 7 auth endpoints implemented, migration `002_add-password-reset-tokens.sql` applied, 23 vitest tests green, full curl lifecycle (register → login → me → refresh rotation/reuse-detection → logout → forgot/reset) verified. Details in the Phase 1 section below.
 - **Phase 2 (Courses, Enrollment, Materials) — complete & verified:** courses + materials modules implemented against local Postgres and live Supabase Storage (signed upload/download), 38 vitest tests green, full curl lifecycle (create course → enroll → signed upload → finalize → version bump → download, plus RBAC denials) verified end-to-end. Details in the Phase 2 section below.
+- **Phase 3 (Assignments, Exams, Submissions) — complete & verified:** assignments + submissions + exams modules implemented, 62 vitest tests green, full curl lifecycle (create → signed upload → finalize → resubmit/history → grade + `feedback` notification; deadline enforcement incl. late-allowed vs `DEADLINE_PASSED`; exam CRUD; cross-lecturer `NOT_COURSE_OWNER` denials; submission download) verified end-to-end. Details in the Phase 3 section below.
+- **Phase 4 (Quizzes) — complete & verified:** quizzes module with server-side auto-grading implemented, 62 vitest tests green, full curl lifecycle (create MCQ + true/false → start returns question IDs without answers → submit scored 3/3 and 0/5 correctly → results breakdown; window checks `QUIZ_NOT_AVAILABLE`/`QUIZ_CLOSED`; single-attempt `QUIZ_ALREADY_ATTEMPTED`; RBAC denials) verified end-to-end. Details in the Phase 4 section below.
 - Design docs are the source of truth: `database-schema.md`, `api-reference.md`, `backend-roadmap.md`, `architecture.md`, `security.md`, `workflows.md`.
 - Frontends are not wired yet: `web/src/lib/apiClient.ts` is empty; the admin console runs on mocks (`web/src/features/admin/data.ts`); `mobile/` has no HTTP layer. No Clerk anywhere — custom JWT auth per `security.md`. The auth API contract already matches the mobile `AuthRepository` / `User.fromApi` shapes and the web auth screens.
 
@@ -116,20 +118,44 @@ Implemented (`src/modules/courses/`, `src/modules/materials/`):
 
 **Deviation from the draft contract:** new-version route is `POST /materials/:id/versions` (not `PATCH /materials/:id`) since a version is a *new row*, not a field update — `api-reference.md` and `workflows.md` updated to match. Download URL access extended to owning lecturers/admins.
 
-## Phase 3 — Assignments, Exams & Submissions
+## Phase 3 — Assignments, Exams & Submissions — ✅ DONE
 
-- Assignment CRUD: `GET /courses/:id/assignments`, `POST /assignments`, `PATCH /assignments/:id`.
-- **Exam CRUD:** `GET /courses/:id/exams`, `POST /exams`, `PATCH /exams/:id` (owning lecturer/admin).
-- Submissions: `POST /submissions/upload-url` (checks enrollment + deadline, sets `is_late`), `POST /submissions` (finalize; UNIQUE per student; resubmit appends `submission_history`), `GET /assignments/:id/submissions` (lecturer), `PATCH /submissions/:id/grade` (score + feedback → `feedback` notification).
+Implemented (`src/modules/assignments/`, `src/modules/exams/`):
 
-**Gate:** late flag correct; submission blocked after deadline when late disallowed; grade triggers student notification.
+- **Assignments:** `assignments.schema.ts` (create/update — `maxScore` coerced + capped at 1000, `deadlineAt` ISO datetime, `allowLateSubmission` default false), `assignments.service.ts` (`createAssignment` rejects past deadlines `DEADLINE_PAST`; `updateAssignment` partial; `listAssignmentsForCourse` course-scoped with per-student `mySubmission` subquery; ownership via `requireLecturerOwns`), `assignments.routes.ts` below.
+- **Submissions:** `createSubmissionUploadUrl` (enrollment + deadline check via `assertNotPastDeadline`, `isLate` computed; storage `createSubmissionUploadUrl` caps at 100 MB, any doc type), `finalizeSubmission` (verifies object exists — `SUBMISSION_FILE_MISSING` — then upsert `ON CONFLICT (assignment_id, student_id) DO UPDATE` + `submission_history` row; `attempts` counter; resubmit after deadline blocked when late disallowed), `gradeSubmission` (`SCORE_EXCEEDS_MAX` guard; writes score/feedback/gradedBy and a `feedback` notification), `listSubmissionsForAssignment` (owning lecturer only), `submissionDownloadUrl` (student owner / owning lecturer / admin).
+- **Exams:** `exams.schema.ts` (create/update — `scheduledAt` ISO, optional `durationMinutes`/`venue`/`instructions`), `exams.service.ts` (course-scoped list, create/update with ownership), routes below.
+- **Shared access helpers added to `courses.service.ts`:** `requireStudentEnrolled`, `requireLecturerOwns`, `requireCourseReadAccess` (used across phases 3–4).
 
-## Phase 4 — Quizzes
+**Routes:**
 
-- Quiz CRUD + questions: `GET /courses/:id/quizzes`, `POST /quizzes`, `PATCH /quizzes/:id`.
-- Attempts: `POST /quizzes/:id/start` (window + `time_limit_minutes` check against `started_at`), `POST /quizzes/:id/submit` — **server-side grading** against `correct_answer` (never trust client scores), `GET /quizzes/:id/results` (own result).
+| Method | Endpoint | Role |
+|---|---|---|
+| GET | `/courses/:id/assignments` | enrolled student / owning lecturer / admin |
+| POST | `/assignments` | owning lecturer |
+| PATCH | `/assignments/:id` | owning lecturer |
+| GET | `/assignments/:id/submissions` | owning lecturer |
+| POST | `/submissions/upload-url` | enrolled student |
+| POST | `/submissions` | enrolled student |
+| PATCH | `/submissions/:id/grade` | owning lecturer |
+| GET | `/submissions/:id/download-url` | student owner / owning lecturer / admin |
+| GET | `/courses/:id/exams` | enrolled student / owning lecturer / admin |
+| POST | `/exams` | owning lecturer |
+| PATCH | `/exams/:id` | owning lecturer |
 
-**Gate:** auto-graded score matches manually verified expected score; availability window enforced server-side.
+**Gate (verified):** create → upload-url (on-time, `isLate:false`) → signed PUT → finalize 201 → resubmit bumps `attempts` to 2 + history row → grade 45/50 with feedback → `feedback` notification for the student (body: *"graded "DSA Homework 1". You scored 45/50."*); past-deadline + late-disallowed submit 403 `DEADLINE_PASSED`; past-deadline + late-allowed submit accepted with `isLate:true` and graded; cross-lecturer list/grade 403 `NOT_COURSE_OWNER`; download URL for owner + lecturer 200. 
+
+**Deviation from the draft contract:** grade route is `PATCH /submissions/:id/grade` (not `/assignments/:id/submissions/:sid/grade`) — `api-reference.md` updated to match. Submission download access extended to the owning lecturer/admin.
+
+## Phase 4 — Quizzes — ✅ DONE
+
+Implemented (`src/modules/quizzes/`):
+
+- **Schema:** `quizzes.schema.ts` — quiz create/update (`timeLimitMinutes` 1–600 nullable, optional `availableFrom`/`availableUntil`), nested `questionSchema` (mcq with 2–6 `options` + `correctAnswer` must be one of them; true/false `correctAnswer` must be `true`/`false` case-insensitive via `superRefine`; 1–100 questions). `submitQuizSchema` requires ≥1 `{ questionId, answer }`.
+- **Service:** `createQuiz`/`updateQuiz` (transactional question replace; `INVALID_WINDOW` if `availableUntil ≤ availableFrom`; ownership), `listQuizzesForCourse` (per-student best-score subquery), `startAttempt` (`QUIZ_NOT_AVAILABLE` / `QUIZ_CLOSED` window checks; single in-progress attempt per student; returns question IDs **without** correct answers), `submitAttempt` (**server-side grading** — score computed from `correct_answer`, never from the client; `QUIZ_ALREADY_ATTEMPTED`, `QUIZ_TIME_EXPIRED` auto-submit with elapsed check, `INVALID_QUESTION` guard; answer normalization trims + lowercases true/false; returns `score/total/correctCount/perQuestionResults` with correct answers), `getResults` (own graded attempt or `QUIZ_NOT_TAKEN`).
+- **Routes:** `POST /quizzes`, `PATCH /quizzes/:id` (owning lecturer), `POST /quizzes/:id/start`, `POST /quizzes/:id/submit`, `GET /quizzes/:id/results` (student).
+
+**Gate (verified):** create MCQ + true/false quiz → start (questions without answers) → submit correct answers → score 3/3, per-question `correct:true`; fresh quiz with all-wrong answers → score 0/5, `correct:false` + correct answers revealed; results endpoint shows full breakdown; future-window start 403 `QUIZ_NOT_AVAILABLE`; past-window start 403 `QUIZ_CLOSED`; second start after submit 409 `QUIZ_ALREADY_ATTEMPTED`; student create 403 `FORBIDDEN_ROLE`, lecturer start 403 `FORBIDDEN_ROLE`; `GET /courses/:id/quizzes` lists with `questionCount`. 62 vitest tests green (schema tests for all three modules added).
 
 ## Phase 5 — Groq AI Quiz Generation
 
@@ -223,7 +249,7 @@ SUPABASE_STORAGE_BUCKET=materials
 
 ## Milestones
 
-- **M1** = Phases 0–4 (student/lecturer core: auth, courses, materials, assignments/exams, quizzes)
+- **M1** = Phases 0–4 (student/lecturer core: auth, courses, materials, assignments/exams, quizzes) — ✅ complete
 - **M2** = Phases 5–7 (AI quiz generation, performance tracking, notifications)
 - **M3** = Phases 8–9 (admin module + hardening)
 

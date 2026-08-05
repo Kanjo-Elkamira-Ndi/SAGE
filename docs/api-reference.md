@@ -63,25 +63,34 @@ All responses follow:
 
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
-| GET | `/courses/:id/assignments` | student/lecturer | List assignments |
-| POST | `/assignments` | lecturer | Create assignment |
-| PATCH | `/assignments/:id` | owning lecturer | Update deadline/instructions |
-| POST | `/submissions/upload-url` | student | Signed upload URL (checks deadline/enrollment) |
-| POST | `/submissions` | student | Finalize submission |
-| GET | `/assignments/:id/submissions` | lecturer | List all submissions for grading |
-| PATCH | `/submissions/:id/grade` | lecturer | Set score + feedback |
+| GET | `/courses/:id/assignments` | student/lecturer | List assignments (student rows include own `mySubmission`) |
+| POST | `/assignments` | owning lecturer | Create assignment (deadline must be in the future) |
+| PATCH | `/assignments/:id` | owning lecturer | Update deadline/instructions/maxScore/late policy |
+| POST | `/submissions/upload-url` | student | Signed upload URL (enforces deadline + enrollment) |
+| POST | `/submissions` | student | Finalize submission (requires uploaded object; re-submitting bumps `attempts` and writes history) |
+| GET | `/assignments/:id/submissions` | owning lecturer | List all submissions for grading |
+| PATCH | `/submissions/:id/grade` | owning lecturer | Set score + feedback (sends `feedback` notification; rejects score > maxScore) |
+| GET | `/submissions/:id/download-url` | owner/owning lecturer/admin | Signed short-lived download URL |
+
+## Exams
+
+| Method | Endpoint | Role | Description |
+|---|---|---|---|
+| GET | `/courses/:id/exams` | student/lecturer | List exams |
+| POST | `/exams` | owning lecturer | Create exam |
+| PATCH | `/exams/:id` | owning lecturer | Update schedule/venue/instructions/duration |
 
 ## Quizzes
 
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
-| GET | `/courses/:id/quizzes` | student/lecturer | List quizzes |
-| POST | `/quizzes` | lecturer | Create quiz manually |
-| POST | `/quizzes/generate` | lecturer | AI-assisted question generation from a material's text (Groq) — returns draft questions for lecturer review, does not auto-publish |
-| PATCH | `/quizzes/:id` | owning lecturer | Update quiz/questions |
-| POST | `/quizzes/:id/start` | student | Start attempt (creates `quiz_attempts` row) |
-| POST | `/quizzes/:id/submit` | student | Submit answers → instant auto-grade |
-| GET | `/quizzes/:id/results` | student | View own result |
+| GET | `/courses/:id/quizzes` | student/lecturer | List quizzes (student rows include own best score) |
+| POST | `/quizzes` | lecturer | Create quiz with questions (MCQ + true/false) |
+| POST | `/quizzes/generate` | lecturer | Planned: AI-assisted question generation (not yet implemented) |
+| PATCH | `/quizzes/:id` | owning lecturer | Update quiz + replace questions |
+| POST | `/quizzes/:id/start` | student | Start attempt (returns question IDs **without** correct answers; one attempt per student) |
+| POST | `/quizzes/:id/submit` | student | Submit answers → server auto-grades; returns score + per-question results (correct answers revealed) |
+| GET | `/quizzes/:id/results` | student | View own graded result (full per-question breakdown) |
 
 ## Performance
 
@@ -118,7 +127,17 @@ All responses follow:
 | `AUTH_TOKEN_EXPIRED` | Access token expired, use refresh |
 | `FORBIDDEN_ROLE` | Authenticated but role not permitted |
 | `NOT_ENROLLED` | Student not enrolled in target course |
+| `NOT_COURSE_OWNER` | Lecturer/admin acting on a course they do not own |
+| `DEADLINE_PAST` | Assignment created/updated with a past deadline |
 | `DEADLINE_PASSED` | Submission attempted after deadline (and late not allowed) |
+| `SCORE_EXCEEDS_MAX` | Grade score above the assignment maxScore |
+| `SUBMISSION_FILE_MISSING` | Finalize referenced a storage object that does not exist |
+| `QUIZ_NOT_AVAILABLE` | Quiz window has not opened yet |
+| `QUIZ_CLOSED` | Quiz window has already closed |
+| `QUIZ_ALREADY_ATTEMPTED` | Student already submitted this quiz (one attempt) |
+| `QUIZ_TIME_EXPIRED` | Time limit exceeded — attempt auto-submitted |
+| `INVALID_QUESTION` | Submitted answer references a question not in the quiz |
+| `QUIZ_NOT_TAKEN` | No graded attempt to view results for |
 | `VALIDATION_ERROR` | Request body failed schema validation |
 | `NOT_FOUND` | Resource does not exist or not visible to requester |
 

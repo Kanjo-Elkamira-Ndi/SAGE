@@ -3,6 +3,9 @@ import { logger } from './lib/logger';
 import { authRoutes } from './modules/auth/auth.routes';
 import { adminCourseRoutes, courseRoutes } from './modules/courses/courses.routes';
 import { materialRoutes } from './modules/materials/materials.routes';
+import { assignmentRoutes, submissionRoutes } from './modules/assignments/assignments.routes';
+import { examRoutes } from './modules/exams/exams.routes';
+import { quizRoutes } from './modules/quizzes/quizzes.routes';
 
 export const apiRouter = Router();
 
@@ -15,4 +18,8 @@ apiRouter.get('/ping', (_req, res) => {
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/courses', courseRoutes);
 apiRouter.use('/materials', materialRoutes);
+apiRouter.use('/assignments', assignmentRoutes);
+apiRouter.use('/submissions', submissionRoutes);
+apiRouter.use('/exams', examRoutes);
+apiRouter.use('/quizzes', quizRoutes);
 apiRouter.use('/admin/courses', adminCourseRoutes);

@@ -278,3 +278,25 @@ export async function canAccessCourse(
   if (user.role === 'lecturer') return course.lecturerId === user.id;
   return isEnrolled(course.id, user.id);
 }
+
+export async function requireStudentEnrolled(courseId: string, studentId: string): Promise<void> {
+  if (!(await isEnrolled(courseId, studentId))) {
+    throw new AppError('NOT_ENROLLED', 'Enroll in this course to access it.', 403);
+  }
+}
+
+export async function requireLecturerOwns(courseId: string, lecturerId: string): Promise<void> {
+  if (!(await isCourseOwner(courseId, lecturerId))) {
+    throw new AppError('NOT_COURSE_OWNER', 'You can only manage your own courses.', 403);
+  }
+}
+
+export async function requireCourseReadAccess(
+  user: { id: string; role: string },
+  course: CourseRow,
+): Promise<void> {
+  if (await canAccessCourse(user, course)) return;
+  throw user.role === 'student'
+    ? new AppError('NOT_ENROLLED', 'You are not enrolled in this course.', 403)
+    : new AppError('NOT_COURSE_OWNER', 'You do not have access to this course.', 403);
+}

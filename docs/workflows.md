@@ -32,6 +32,13 @@
 4. Student sees instant result screen.
 5. Score feeds into performance snapshot computation.
 
+## 4a. Exam Lifecycle
+
+1. Lecturer schedules an exam: title, `scheduled_at`, optional duration/venue/instructions.
+2. Students see it in the course exam list.
+3. The hourly reminder cron (Phase 7) emits `deadline_reminder` notifications inside the reminder window for enrolled students — reusing the existing `notifications` type with `related_entity_type = 'exam'` (no enum churn, per the exams decision).
+4. Exam execution itself is offline/room-based in v1 — the API tracks the schedule, not the sitting.
+
 ## 5. Quiz Lifecycle (AI-Assisted Generation) — Division of Labor
 
 This is the workflow where the AI/deterministic boundary matters most. Follow this exactly:
@@ -88,13 +95,13 @@ risk_level =
 
 ## 9. Manual Test Checklist (maintain and expand as features land)
 
-- [ ] Register → login → access role-appropriate dashboard only
-- [ ] Lecturer uploads material → student sees it immediately, can download
-- [ ] Material update → old version still accessible via history, new version marked current
-- [ ] Assignment submission after deadline is correctly flagged (and blocked if late not allowed)
-- [ ] Quiz auto-grading matches manually verified expected score
-- [ ] AI-generated quiz questions require explicit lecturer approval before going live
-- [ ] Risk score recomputes correctly after a new grade is entered
-- [ ] Deadline reminder does not fire twice for the same event
-- [ ] Admin deactivating a user immediately blocks their login
-- [ ] Cross-role access attempts (e.g. student hitting a lecturer-only endpoint) are rejected server-side
+- [x] Register → login → access role-appropriate dashboard only
+- [x] Lecturer uploads material → student sees it immediately, can download
+- [x] Material update → old version still accessible via history, new version marked current
+- [x] Assignment submission after deadline is correctly flagged (and blocked if late not allowed)
+- [x] Quiz auto-grading matches manually verified expected score
+- [ ] AI-generated quiz questions require explicit lecturer approval before going live (Phase 5)
+- [ ] Risk score recomputes correctly after a new grade is entered (Phase 6)
+- [ ] Deadline reminder does not fire twice for the same event (Phase 7)
+- [x] Admin deactivating a user immediately blocks their login
+- [x] Cross-role access attempts (e.g. student hitting a lecturer-only endpoint) are rejected server-side

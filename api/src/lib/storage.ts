@@ -4,6 +4,7 @@ import { AppError } from './errors';
 export type MaterialType = 'pdf' | 'pptx' | 'notes';
 
 export const MAX_MATERIAL_BYTES = 50 * 1024 * 1024; // 50 MB
+export const MAX_SUBMISSION_BYTES = 100 * 1024 * 1024; // 100 MB
 
 export const DEFAULT_DOWNLOAD_URL_TTL_SECONDS = 300; // 5 minutes
 
@@ -42,9 +43,22 @@ export function slugify(value: string): string {
   );
 }
 
+/**
+ * Slugifies a filename but keeps its final extension intact
+ * (e.g. "Lecture 1 - Arrays.pdf" -> "lecture-1-arrays.pdf").
+ */
+export function slugifyFilename(fileName: string): string {
+  const ext = fileName.match(/\.[a-z0-9]{1,10}$/i)?.[0] ?? '';
+  const base = fileName.slice(0, fileName.length - ext.length);
+  const slug = slugify(base);
+  return `${slug}${ext.toLowerCase()}`;
+}
+
 export function buildStorageKey(courseId: string, fileName: string, type: MaterialType): string {
   const uuid = crypto.randomUUID();
-  return `${courseId}/${uuid}-${slugify(fileName)}.${fileExtensionForType(type)}`;
+  const name = slugifyFilename(fileName);
+  const key = name.match(/\.\w{1,10}$/) ? name : `${name}.${fileExtensionForType(type)}`;
+  return `${courseId}/${uuid}-${key}`;
 }
 
 function requireStorageConfig(): string {
@@ -106,29 +120,16 @@ export interface UploadUrlResult {
 }
 
 /**
- * Issues a signed upload URL for a single material file. The client PUTs the
+ * Issues a signed upload URL for a single object path. The client PUTs the
  * bytes directly to Supabase using the returned URL (authorized by its token —
  * the service role key never leaves the server).
  */
-export async function createMaterialUploadUrl(input: {
-  courseId: string;
+export async function createSignedUploadUrl(input: {
+  path: string;
   contentType: string;
   fileSizeBytes: number;
-  fileName: string;
 }): Promise<UploadUrlResult> {
-  const type = materialTypeFromMime(input.contentType);
-  if (!type) {
-    throw new AppError(
-      'UNSUPPORTED_FILE_TYPE',
-      `File type not allowed. Supported: ${ALLOWED_MATERIAL_MIME_TYPES.join(', ')}.`,
-      400,
-    );
-  }
-  if (input.fileSizeBytes > MAX_MATERIAL_BYTES) {
-    throw new AppError('FILE_TOO_LARGE', 'File exceeds the 50 MB limit.', 400);
-  }
-
-  const storageKey = buildStorageKey(input.courseId, input.fileName, type);
+  const storageKey = input.path;
   const { ok, status, body } = await storageRequest(
     `/object/upload/sign/${env.SUPABASE_STORAGE_BUCKET}/${encodePath(storageKey)}`,
     {
@@ -160,9 +161,60 @@ export async function createMaterialUploadUrl(input: {
 }
 
 /**
- * Issues a short-lived signed download URL for a stored material.
+ * Issues a signed upload URL for a single material file (MIME allowlist + size
+ * cap enforced at issuance).
  */
-export async function createMaterialDownloadUrl(
+export async function createMaterialUploadUrl(input: {
+  courseId: string;
+  contentType: string;
+  fileSizeBytes: number;
+  fileName: string;
+}): Promise<UploadUrlResult> {
+  const type = materialTypeFromMime(input.contentType);
+  if (!type) {
+    throw new AppError(
+      'UNSUPPORTED_FILE_TYPE',
+      `File type not allowed. Supported: ${ALLOWED_MATERIAL_MIME_TYPES.join(', ')}.`,
+      400,
+    );
+  }
+  if (input.fileSizeBytes > MAX_MATERIAL_BYTES) {
+    throw new AppError('FILE_TOO_LARGE', 'File exceeds the 50 MB limit.', 400);
+  }
+
+  const storageKey = buildStorageKey(input.courseId, input.fileName, type);
+  return createSignedUploadUrl({
+    path: storageKey,
+    contentType: input.contentType,
+    fileSizeBytes: input.fileSizeBytes,
+  });
+}
+
+/**
+ * Issues a signed upload URL for an assignment submission (any document type,
+ * capped at 100 MB).
+ */
+export async function createSubmissionUploadUrl(input: {
+  assignmentId: string;
+  fileName: string;
+  contentType: string;
+  fileSizeBytes: number;
+}): Promise<UploadUrlResult> {
+  if (input.fileSizeBytes > MAX_SUBMISSION_BYTES) {
+    throw new AppError('FILE_TOO_LARGE', 'File exceeds the 100 MB limit.', 400);
+  }
+  const storageKey = `${input.assignmentId}/${crypto.randomUUID()}-${slugifyFilename(input.fileName)}`;
+  return createSignedUploadUrl({
+    path: storageKey,
+    contentType: input.contentType,
+    fileSizeBytes: input.fileSizeBytes,
+  });
+}
+
+/**
+ * Issues a short-lived signed download URL for any stored object.
+ */
+export async function createSignedDownloadUrl(
   storageKey: string,
   expiresInSeconds = DEFAULT_DOWNLOAD_URL_TTL_SECONDS,
 ): Promise<{ downloadUrl: string; expiresInSeconds: number }> {
@@ -180,6 +232,8 @@ export async function createMaterialDownloadUrl(
   }
   return { downloadUrl: `${env.SUPABASE_URL as string}/storage/v1${signedURL}`, expiresInSeconds };
 }
+
+export const createMaterialDownloadUrl = createSignedDownloadUrl;
 
 /**
  * Verifies that an object actually exists in storage (used when finalizing a
