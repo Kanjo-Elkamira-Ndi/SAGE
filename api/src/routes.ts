@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { logger } from './lib/logger';
+import { authRoutes } from './modules/auth/auth.routes';
 
 export const apiRouter = Router();
 
@@ -9,6 +10,7 @@ apiRouter.get('/ping', (_req, res) => {
   res.json({ success: true, data: { pong: true } });
 });
 
+apiRouter.use('/auth', authRoutes);
+
 // Feature modules mount here in later phases, e.g.:
-// apiRouter.use('/auth', authRoutes);
 // apiRouter.use('/courses', courseRoutes);

@@ -19,11 +19,13 @@ All responses follow:
 
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
-| POST | `/auth/register` | public | Register (student self-registration; lecturer/admin created by admin) |
-| POST | `/auth/login` | public | Returns access + refresh token |
-| POST | `/auth/refresh` | public (valid refresh token) | Issues new access token |
-| POST | `/auth/logout` | authenticated | Revokes refresh token |
-| GET | `/auth/me` | authenticated | Current user profile |
+| POST | `/auth/register` | public | Register. Students self-activate; lecturer/admin signups are created inactive (`pendingApproval: true`) until an admin approves. Does **not** start a session — user logs in after. |
+| POST | `/auth/login` | public | Returns `accessToken` + user; sets `refresh_token` httpOnly cookie (path `/v1/auth`) |
+| POST | `/auth/refresh` | public (valid refresh token) | Rotates the refresh token (new cookie each call); reuse of an old token revokes **all** the user's sessions (`AUTH_TOKEN_REUSED`). Token accepted from cookie, body `refreshToken`, or `Authorization: Bearer` |
+| POST | `/auth/logout` | authenticated | Revokes refresh token + clears cookie |
+| GET | `/auth/me` | authenticated | Current user profile (`{ id, email, fullName, role, avatarUrl, departmentName }`) |
+| POST | `/auth/forgot-password` | public | Creates a 1-hour reset token + sends reset link (`FRONTEND_URL`). Responds 200 for unknown emails (no enumeration). Dev/test mode echoes `resetToken`/`resetLink` in the response |
+| POST | `/auth/reset-password` | public | Body `{ token, newPassword }`. Single-use; revokes all refresh tokens for the user |
 
 ## Users & Departments (Admin)
 

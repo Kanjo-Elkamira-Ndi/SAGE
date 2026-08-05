@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { pool, pingDatabase } from './config/db';
 import { corsOriginList } from './config/env';
@@ -19,6 +20,7 @@ export function createApp(): express.Express {
     }),
   );
   app.use(express.json({ limit: '1mb' }));
+  app.use(cookieParser());
   app.use(httpLogger);
 
   app.get('/health', async (_req, res) => {

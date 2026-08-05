@@ -4,9 +4,10 @@ Execution plan for the Express API in `api/`. Build order mirrors `backend-roadm
 
 ## Current State
 
-- `api/` is empty scaffolding — every `.ts` file is 0 lines (app, server, auth module, middleware, lib, jobs, config), `package.json` is the npm default, `tsconfig.json` and `.env.example` are empty.
-- Design docs are complete and are the source of truth: `database-schema.md`, `api-reference.md`, `backend-roadmap.md`, `architecture.md`, `security.md`, `workflows.md`.
-- Frontends are not wired yet: `web/src/lib/apiClient.ts` is empty; the admin console runs on mocks (`web/src/features/admin/data.ts`); `mobile/` has no HTTP layer. No Clerk anywhere — custom JWT auth per `security.md`.
+- **Phase 0 (Scaffold & Infra) — complete & verified:** build passes, `001_init.sql` migration applied (18 tables incl. `exams` + indexes), seed (4 departments + `admin@sage.app`), `/health` 200 with DB check, `/v1/ping` 200, 404 envelope, 6 vitest tests green.
+- **Phase 1 (Auth & RBAC) — complete & verified:** all 7 auth endpoints implemented, migration `002_add-password-reset-tokens.sql` applied, 23 vitest tests green, full curl lifecycle (register → login → me → refresh rotation/reuse-detection → logout → forgot/reset) verified. Details in the Phase 1 section below.
+- Design docs are the source of truth: `database-schema.md`, `api-reference.md`, `backend-roadmap.md`, `architecture.md`, `security.md`, `workflows.md`.
+- Frontends are not wired yet: `web/src/lib/apiClient.ts` is empty; the admin console runs on mocks (`web/src/features/admin/data.ts`); `mobile/` has no HTTP layer. No Clerk anywhere — custom JWT auth per `security.md`. The auth API contract already matches the mobile `AuthRepository` / `User.fromApi` shapes and the web auth screens.
 
 ## Locked Decisions
 
@@ -71,16 +72,18 @@ Indexes: `exams(course_id)`, `exams(scheduled_at)`.
 
 **Gate:** `npm run build` passes; `GET /health` returns 200; migrations apply cleanly against `sage`.
 
-## Phase 1 — Auth & RBAC
+## Phase 1 — Auth & RBAC — ✅ DONE
 
-- `src/modules/auth/auth.schema.ts` — zod: register, login, refresh.
-- `auth.service.ts` — argon2 hashing; JWT issue (15-min access); refresh token = random value, **sha256 hash stored** in `refresh_tokens`; rotation + reuse detection (revoke-all-sessions on reuse); logout revoke.
-- `auth.controller.ts` / `auth.routes.ts` — `POST /auth/register|login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`.
+Implemented (`src/modules/auth/`):
+
+- `auth.schema.ts` — zod: `register`, `login`, `forgotPassword`, `resetPassword`. Strong password policy (8+ chars, upper, lower, digit, symbol). Emails lowercased/trimmed; `role` defaulted to `student` on register.
+- `auth.service.ts` — argon2 hashing; JWT issue (15-min access, `sub`+`role`); refresh token = random 48-byte value, **sha256 hash stored** in `refresh_tokens`; rotation + reuse detection (revoke-all-sessions on reuse → `AUTH_TOKEN_REUSED`); logout revoke; `touchLastLogin`. Public user shape joins `departments.name AS department_name` — matches mobile `User.fromApi`.
+- `auth.controller.ts` / `auth.routes.ts` — `POST /auth/register|login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/forgot-password`, `POST /auth/reset-password`. Refresh token accepted from httpOnly cookie (`path: /v1/auth`, secure in prod, sameSite lax/none), body `refreshToken`, or Bearer header. Activity logs on login/logout/failed login/register/reset.
+- **Pending-approval flow:** student registrations auto-active; lecturer/admin signups created `is_active=false` and the 201 includes `pendingApproval: true`. Inactive accounts cannot log in or refresh (`USER_DEACTIVATED` 403) — admin console "pending" list backs this.
+- **Password reset:** new `password_reset_tokens` table (migration `002`), 1h TTL, sha256-hashed tokens, single-use. Reset link built from `FRONTEND_URL`. Dev/test mode echoes `resetToken`/`resetLink` in the response (no SMTP yet); production sends via `lib/mailer.ts` (SMTP placeholders in `.env.example`). Reset revokes all the user's refresh sessions.
 - `middleware/auth.ts` — verify Bearer, load user, reject if `is_active = false`.
-- `middleware/requireRole.ts` — `requireRole('student','lecturer','admin')`; ownership helpers (`requireCourseOwner`) in service layer.
-- Activity logs on login / logout / failed login.
 
-**Gate:** Postman flow register → login → me → refresh → logout; cross-role endpoint rejection returns `FORBIDDEN_ROLE`; deactivated user cannot log in.
+**Gate (verified):** curl lifecycle all green — student register 201 (no session) / lecturer register `pendingApproval:true`; duplicate email 409 `EMAIL_TAKEN`; weak password 400 `VALIDATION_ERROR`; login 200 + `Set-Cookie` refresh; `/auth/me` 200 / 401 missing / 401 invalid; pending login 403 `USER_DEACTIVATED`; wrong password 401; refresh rotation 200; old-token reuse 401 `AUTH_TOKEN_REUSED` + all sessions revoked; logout revokes; forgot-password 200 (dev token, unknown email no-enumeration); reset-password 200 → single-use 400 `RESET_TOKEN_USED` → login with new password 200 / old password 401.
 
 ## Phase 2 — Courses, Enrollment, Materials
 
@@ -184,9 +187,15 @@ DATABASE_URL=postgresql://postgresql:codex4587@localhost:5432/sage
 JWT_ACCESS_SECRET=<random>
 JWT_REFRESH_SECRET=<random distinct>
 CORS_ORIGINS=http://localhost:5173,http://localhost:3000
-# SUPABASE_URL=            # needed Phase 2 (Storage)
+FRONTEND_URL=http://localhost:5173
+# SMTP_HOST=                  # needed before production password-reset emails
+# SMTP_PORT=587
+# SMTP_USER=
+# SMTP_PASS=
+# SMTP_FROM=SAGE <no-reply@sage.app>
+# SUPABASE_URL=               # needed Phase 2 (Storage)
 # SUPABASE_SERVICE_ROLE_KEY=  # needed Phase 2 (Storage)
-# GROQ_API_KEY=            # needed Phase 5 (AI)
+# GROQ_API_KEY=               # needed Phase 5 (AI)
 ```
 
 ## Milestones

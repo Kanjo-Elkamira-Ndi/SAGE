@@ -10,6 +10,7 @@ const envSchema = z.object({
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
   CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:3000'),
+  FRONTEND_URL: z.string().url().default('http://localhost:5173'),
   SUPABASE_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   GROQ_API_KEY: z.string().optional(),
