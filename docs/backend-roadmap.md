@@ -49,19 +49,26 @@ Each phase should end in something testable via Postman/curl before moving to th
 - Endpoints: `/performance/me`, `/performance/me/risk`, `/performance/courses/:id` (note plural), `/admin/performance/at-risk`, plus `/admin/performance/recompute-snapshots`.
 - Snapshot generation triggered: (a) weekly cron, (b) on-demand recompute after a grade is finalized for that student (also on quiz submit). Advisory-locked upsert prevents duplicate rows.
 
-## Phase 7 — Notifications & Cron Jobs
+## Phase 7 — Notifications & Cron Jobs ✅ DONE
 - `notifications`, `notifications_sent`, `announcements` tables.
-- `node-cron` schedules:
-  - Hourly: deadline reminder scan (assignments/quizzes/exams within reminder window).
-  - Daily: new-material digest, personalized AI study plan generation (pulls latest performance snapshot per student, Groq call to phrase a short recommendation, writes as notification).
-- Announcement endpoints (course-scoped and system-wide).
+- Notifications module (`/notifications`): list with `isRead`/`type` filters + pagination, mark-one-read, mark-all-read. Unread count returned with every list.
+- Cron idempotency: `notifications_sent` guard rows (`UNIQUE user_id, event_type, event_ref_id`), written in the same transaction as the notification. Event keys derived from content via `uuidFromString()` (deterministic sha-256 → v5-shaped uuid), so rerunning a job never double-notifies.
+- `node-cron` schedules (all in `src/jobs/scheduler.ts`, `startScheduler()` returns `{stop}`):
+  - `5 * * * *` — `deadlineReminders.job`: scans assignments with `allow_late_submission = false` not yet submitted, due within each window (default `48,24,2` hours, env `DEADLINE_REMINDER_WINDOWS`).
+  - `0 21 * * *` — `materialDigest.job`: daily per-student "new materials" digest for materials uploaded in the last 24h to their courses.
+  - `0 5 * * *` — `studyPlan.job`: personalized AI study plan per student from their course list + 5 nearest deadlines via a Groq call, written as an `ai_study_plan` notification. Groq unavailable/no-courses students are skipped, never fails the job.
+  - `0 2 * * 0` — `performanceSnapshot.job`: weekly full recompute (wraps `recomputeAllSnapshots`).
+- Announcement endpoints: create (school-wide or course-scoped; auto-notifies audience — all active users, or the course's active enrolled students), list, update, delete. Lecturers may only post to courses they own.
 - Notification list/read endpoints.
+- Live-user notifications are written directly; cron notifications go through `sendIdempotentNotification`.
 
-## Phase 8 — Admin Module
-- User/department management endpoints (create lecturer/admin, deactivate, role change).
-- `activity_logs` query endpoint with filters (user, action, date range).
-- Reporting endpoints (`/admin/reports/overview`, `/admin/reports/export`) — start with overview stats (user counts, course counts, submission rates), CSV export before PDF export.
-- Permissions table wiring for any beyond-role-based access control needed.
+## Phase 8 — Admin Module ✅ DONE
+- User management endpoints (`/admin/users`): list with `role`/`status` (active|pending|deactivated)/`q` filters, activate/deactivate (self-deactivation blocked), role change (self-change blocked). Pending = `is_active=false AND activated_at IS NULL` (migration `add-users-activated-at`); deactivated = `is_active=false AND activated_at IS NOT NULL`. New lecturer/admin signups register pending and cannot log in until activated (`USER_PENDING_APPROVAL`).
+- Department management endpoints: list (with lecturer counts), create (unique `code`, 409 on conflict), update.
+- `activity_logs` query endpoint with filters (user, action ILIKE).
+- Reporting endpoints: `/admin/dashboard/stats` (overview counts + at-risk summary + 14-day enrollment retention + recent activity), `/admin/reports/at-risk` (snapshot-driven, `minScore`/`level` filters), `/admin/reports/at-risk/export` (CSV, `lib/csv.ts`).
+- Permissions table wiring: per-user grant/revoke/list (`permissions`), plus a coarse role→permission map (`middleware/requirePermission.ts`) for future use.
+- All admin routes gated by `requireRole('admin')`.
 
 ## Phase 9 — Hardening
 - Rate limiting on auth endpoints.

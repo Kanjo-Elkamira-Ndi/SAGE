@@ -19,6 +19,7 @@ Postgres (Supabase). Raw SQL, no ORM. All tables use `uuid` primary keys (`gen_r
 | department_id | uuid FK → departments.id | nullable for admin |
 | avatar_url | text | nullable |
 | is_active | boolean DEFAULT true | admin can deactivate |
+| activated_at | timestamptz | null = account awaiting admin approval (students self-activate at registration; lecturer/admin signups stay null until an admin activates them) |
 | last_login_at | timestamptz | nullable |
 
 ### `departments`

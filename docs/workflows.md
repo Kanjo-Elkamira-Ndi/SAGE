@@ -36,7 +36,7 @@
 
 1. Lecturer schedules an exam: title, `scheduled_at`, optional duration/venue/instructions.
 2. Students see it in the course exam list.
-3. The hourly reminder cron (Phase 7) emits `deadline_reminder` notifications inside the reminder window for enrolled students — reusing the existing `notifications` type with `related_entity_type = 'exam'` (no enum churn, per the exams decision).
+3. The hourly reminder cron (Phase 7) emits `deadline_reminder` notifications inside the reminder window for enrolled students of **assignments** with `allow_late_submission = false` — reusing the existing `notifications` type with `related_entity_type = 'assignment'` (no enum churn). Quiz/exam reminders are a future extension of the same scan.
 4. Exam execution itself is offline/room-based in v1 — the API tracks the schedule, not the sitting.
 
 ## 5. Quiz Lifecycle (AI-Assisted Generation) — Division of Labor
@@ -73,7 +73,7 @@ risk_level =
 
 - This computation is pure code (or SQL), unit-tested, and stored in `performance_snapshots`. It must be reproducible and explainable — if a lecturer asks "why is this student flagged," the answer should be a breakdown of the four factors above, not "the model decided."
 
-**Implementation status:** implemented in `api/src/modules/performance/risk.ts` (weights/thresholds as `RISK_WEIGHTS`/`RISK_THRESHOLDS` constants, pure + unit-tested). Snapshots are recomputed best-effort whenever a grade or quiz attempt is finalized, and weekly via cron (`0 2 * * 0`). `/admin/performance/at-risk` defaults to `minScore = 0.33` (medium+) so the report lists only actionable students. Risk is *decline vs the previous snapshot*, so a student who maintains steady (even low) performance has a low score until a drop appears.
+**Implementation status:** implemented in `api/src/modules/performance/risk.ts` (weights/thresholds as `RISK_WEIGHTS`/`RISK_THRESHOLDS` constants, pure + unit-tested). Snapshots are recomputed best-effort whenever a grade or quiz attempt is finalized, and weekly via cron (`0 2 * * 0`). `/admin/reports/at-risk` defaults to `minScore = 0.33` (medium+) so the report lists only actionable students. Risk is *decline vs the previous snapshot*, so a student who maintains steady (even low) performance has a low score until a drop appears.
 
 **AI step (narration only, strictly downstream of the score):**
 
@@ -83,17 +83,20 @@ risk_level =
 
 ## 7. Notification & Reminder Flow
 
-1. Hourly cron scans `assignments`/`quizzes` with deadlines inside the reminder window (e.g. 48h and 24h and 2h before).
-2. For each affected student, check `notifications_sent` for that `(user_id, event_type, event_ref_id)` — skip if already sent.
-3. If not sent: write `notifications` row, insert into `notifications_sent`, optionally send email.
-4. Daily cron: for each student with a recent `performance_snapshots` row, generate an AI study-plan notification per the narration step above (Section 6) — also idempotency-checked per day.
+**Implemented (Phase 7 ✅).** Four scheduled jobs run via `node-cron` in `src/jobs/scheduler.ts` (`startScheduler()` → `{stop}`, disabled in tests). Every job is wrapped in a guard that logs-and-swallows so one failure never kills the scheduler. Idempotency: each notification goes through `sendIdempotentNotification`, which writes `notifications_sent` (UNIQUE `user_id, event_type, event_ref_id`) **in the same transaction** as the `notifications` row; a rerun finds the guard and skips.
+
+1. **Hourly** (`5 * * * *`, `deadlineReminders.job`): scans `assignments` with `allow_late_submission = false` and no submission yet, for active enrolled students, due within each window in `DEADLINE_REMINDER_WINDOWS` (default `48,24,2` hours). Emits one `deadline_reminder` per `(student, assignment, windowHours)` — so a student can get a 2-day, 1-day, and 2-hour notice for the same deadline. Event ref key: `{studentId}:{assignmentId}:{hours}h`.
+2. **Daily 21:00** (`materialDigest.job`): groups materials uploaded in the last 24h by course, sends each active enrolled student a `new_material` digest listing them (key: `{studentId}:{dateKey}`).
+3. **Daily 05:00** (`studyPlan.job`): per student, gathers their courses + 5 nearest upcoming deadlines, calls Groq for a short supportive study plan (sanitized to 4000 chars), writes an `ai_study_plan` notification (key: `{studentId}:{dateKey}`). Students with no courses/deadlines, or when Groq is unavailable, are **skipped** — the job never fails the run.
+4. Announcements notify their audience immediately (all active users for school-wide; the course's active enrolled students when `courseId` is set) as `announcement` notifications.
 
 ## 8. Admin Oversight Flow
 
-1. Admin views `activity_logs`, filterable by user/action/date — used to investigate anomalies or answer "who changed X."
-2. Admin manages accounts: create lecturer, deactivate student, reassign department.
-3. Admin views at-risk report (`/admin/performance/at-risk`) — aggregated from the same deterministic scoring used in student-facing views, ensuring consistency between what a student sees about themselves and what an admin/lecturer sees about them.
-4. Admin generates/export reports (CSV first, PDF later) for university reporting needs.
+1. Admin views `activity_logs` (`/admin/activity-logs`, filterable by user/action), used to investigate anomalies or answer "who changed X."
+2. Admin manages accounts (`/admin/users`): list with `role`/`status`/`q` filters, activate pending lecturers (pending accounts get `USER_PENDING_APPROVAL` on login until then), deactivate, change roles (self-actions blocked).
+3. Admin views `/admin/dashboard/stats` (counts, pending approvals, at-risk summary, 14-day enrollment retention) and the at-risk report (`/admin/reports/at-risk`) — aggregated from the same deterministic scoring used in student-facing views, ensuring consistency between what a student sees about themselves and what an admin/lecturer sees about them.
+4. Admin exports the at-risk report as CSV (`/admin/reports/at-risk/export`). PDF export is deferred (post-v1 backlog).
+5. Admin manages departments (`/admin/departments`; unique code) and per-user permissions (`/admin/users/:id/permissions`).
 
 ## 9. Manual Test Checklist (maintain and expand as features land)
 
@@ -102,8 +105,11 @@ risk_level =
 - [x] Material update → old version still accessible via history, new version marked current
 - [x] Assignment submission after deadline is correctly flagged (and blocked if late not allowed)
 - [x] Quiz auto-grading matches manually verified expected score
-- [ ] AI-generated quiz questions require explicit lecturer approval before going live (Phase 5)
-- [ ] Risk score recomputes correctly after a new grade is entered (Phase 6)
-- [ ] Deadline reminder does not fire twice for the same event (Phase 7)
+- [x] AI-generated quiz questions require explicit lecturer approval before going live (Phase 5)
+- [x] Risk score recomputes correctly after a new grade is entered (Phase 6)
+- [x] Deadline reminder does not fire twice for the same event (Phase 7)
+- [x] New-material digest and study-plan notifications are idempotent per day (Phase 7)
+- [x] Course-scoped announcement notifies only that course's enrolled students (Phase 7)
 - [x] Admin deactivating a user immediately blocks their login
+- [x] Pending lecturer/admin login is blocked with `USER_PENDING_APPROVAL` until activation (Phase 8)
 - [x] Cross-role access attempts (e.g. student hitting a lecturer-only endpoint) are rejected server-side

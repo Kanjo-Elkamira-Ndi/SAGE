@@ -8,6 +8,9 @@ import { examRoutes } from './modules/exams/exams.routes';
 import { quizRoutes } from './modules/quizzes/quizzes.routes';
 import { performanceRoutes } from './modules/performance/performance.routes';
 import { adminPerformanceRoutes } from './modules/performance/admin-performance.routes';
+import notificationsRoutes from './modules/notifications/notifications.routes';
+import announcementsRoutes from './modules/announcements/announcements.routes';
+import adminRoutes from './modules/admin/admin.routes';
 
 export const apiRouter = Router();
 
@@ -27,4 +30,7 @@ apiRouter.use('/quizzes', quizRoutes);
 apiRouter.use('/admin/courses', adminCourseRoutes);
 apiRouter.use('/performance', performanceRoutes);
 apiRouter.use('/admin/performance', adminPerformanceRoutes);
+apiRouter.use('/notifications', notificationsRoutes());
+apiRouter.use('/announcements', announcementsRoutes());
+apiRouter.use('/admin', adminRoutes());
 

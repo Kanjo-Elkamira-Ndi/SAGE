@@ -21,6 +21,7 @@ const envSchema = z.object({
   GROQ_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.7),
   QUIZ_GENERATE_MAX_PER_MINUTE: z.coerce.number().int().positive().default(6),
   MAX_MATERIAL_TEXT_CHARS: z.coerce.number().int().positive().default(15000),
+  DEADLINE_REMINDER_WINDOWS: z.string().default('48,24,2'),
 });
 
 const parsed = envSchema.safeParse(process.env);

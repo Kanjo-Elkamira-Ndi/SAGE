@@ -87,8 +87,8 @@ export async function registerUser(input: {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO users (email, password_hash, full_name, role, is_active)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO users (email, password_hash, full_name, role, is_active, activated_at)
+       VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 THEN now() END)
        RETURNING id, email, full_name, role, avatar_url, is_active,
                  NULL AS department_name`,
       [email, passwordHash, input.fullName.trim(), input.role, isActive],
@@ -105,7 +105,7 @@ export async function registerUser(input: {
 export async function authenticate(email: string, password: string): Promise<PublicUser> {
   // password_hash is needed locally for argon2.verify but is never returned to callers.
   const { rows } = await pool.query(
-    `SELECT u.id, u.email, u.full_name, u.role, u.avatar_url, u.is_active,
+    `SELECT u.id, u.email, u.full_name, u.role, u.avatar_url, u.is_active, u.activated_at,
             d.name AS department_name,
             u.password_hash
        FROM users u
@@ -122,7 +122,12 @@ export async function authenticate(email: string, password: string): Promise<Pub
     throw new AppError('AUTH_INVALID_CREDENTIALS', 'Invalid email or password.', 401);
   }
   if (!row.is_active) {
-    throw new AppError('USER_DEACTIVATED', 'Account is inactive or pending approval.', 403);
+    const pending = row.activated_at == null;
+    throw new AppError(
+      pending ? 'USER_PENDING_APPROVAL' : 'USER_DEACTIVATED',
+      pending ? 'Account is awaiting admin approval.' : 'Account has been deactivated.',
+      403,
+    );
   }
   return toPublicUser(row);
 }

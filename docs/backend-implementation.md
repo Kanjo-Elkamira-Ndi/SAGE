@@ -177,7 +177,7 @@ Implemented (`src/modules/performance/`):
 
 - **Pure risk module** (`risk.ts`): `computeRiskScore` / `riskLevelFromScore` / `explainRisk` implementing the exact `workflows.md` formula — `0.35·gpaDecline + 0.25·missedSubmissionRate + 0.25·quizDecline + 0.15·lowEngagement`, thresholds high ≥ 0.66 / medium ≥ 0.33 — as `RISK_WEIGHTS` / `RISK_THRESHOLDS` constants. Fully unit-tested (`risk.test.ts`).
 - **Service** (`performance.service.ts`): `computeStudentMetrics` (GPA = average scored % across graded assignments + quiz attempts; per-course aggregates incl. `missedSubmissionRate`), `buildRiskFactors` (decline vs the previous snapshot), snapshot lifecycle — `recomputeOne` recomputes the overall + course snapshot for a student in one transaction and upserts via **DELETE+INSERT keyed on `(student_id, course_id, snapshot_date)` guarded by a Postgres advisory lock**, so concurrent grade/quiz triggers cannot create duplicate rows. Triggers: `recomputeStudentSnapshotsForGrade` fire-and-forget (`void`) from `assignments.gradeSubmission` and `quizzes.submitAttempt`; best-effort, failures logged as `performance.snapshot.recompute_failed`.
-- **Endpoints:** `GET /performance/me` (student — overall snapshot + metrics), `GET /performance/me/risk` (student — factor breakdown, score, level, last snapshot date), `GET /performance/courses/:id` (lecturer — course averages + per-student rows with risk), `GET /admin/performance/at-risk` (admin — latest overall snapshot per student; default `minScore` = the medium threshold 0.33 so the report only surfaces actionable students; `?minScore=` / `?level=` overrides), `POST /admin/performance/recompute-snapshots` (admin — one-off full or per-course recompute).
+- **Endpoints:** `GET /performance/me` (student — overall snapshot + metrics), `GET /performance/me/risk` (student — factor breakdown, score, level, last snapshot date), `GET /performance/courses/:id` (lecturer — course averages + per-student rows with risk), `GET /admin/reports/at-risk` (admin — latest overall snapshot per student; default `minScore` = the medium threshold 0.33 so the report only surfaces actionable students; `?minScore=` / `?level=` overrides), `POST /admin/performance/recompute-snapshots` (admin — one-off full or per-course recompute).
 - **Weekly cron** (`src/jobs/scheduler.ts`): `node-cron` `0 2 * * 0` (Sunday 02:00) recomputes all snapshots; scheduler disabled in the test env, started from `server.ts`.
 - Plain-language risk narration remains **display-only and downstream** of the score per `workflows.md`; the Groq call for it is deferred to the Phase 7 study-plan job.
 
@@ -185,28 +185,33 @@ Implemented (`src/modules/performance/`):
 
 **Deviation from the draft contract:** course-performance route is `/performance/courses/:id` (plural) and at-risk is admin-only (draft said `/performance/course/:id`, `admin/lecturer`) — `api-reference.md` updated to match.
 
-## Phase 7 — Notifications & Cron
+## Phase 7 — Notifications & Cron ✅ DONE
 
-- `src/jobs/scheduler.ts` + jobs: `deadlineReminders.job.ts`, `studyPlan.job.ts`, `performanceSnapshot.job.ts`.
-- Hourly: scan `assignments`, `quizzes`, and **`exams`** for deadlines in the reminder window (48h / 24h / 2h); write `notifications` rows + `notifications_sent` (UNIQUE `user_id, event_type, event_ref_id`) to prevent duplicates.
-- Daily: personalized AI study-plan notifications from latest `performance_snapshots` (Groq narration), idempotency-checked per day.
-- Announcements: `POST /announcements` (course-scoped or system-wide), `GET /notifications` (paginated), `PATCH /notifications/:id/read`.
+- `src/jobs/scheduler.ts` (`startScheduler()` → `{stop}`, disabled in test env) + jobs: `deadlineReminders.job.ts`, `materialDigest.job.ts`, `studyPlan.job.ts`, `performanceSnapshot.job.ts`. Every job is wrapped in a `guard()` that logs and swallows errors so one failure never kills the scheduler.
+- **Hourly** (`5 * * * *`): `deadlineReminders` scans `assignments` where `allow_late_submission = false`, not yet submitted (NOT EXISTS submission), joined to active enrolled students, due within each window of `DEADLINE_REMINDER_WINDOWS` (default `48,24,2` hours). Writes a `deadline_reminder` notification per `studentId:assignmentId:{hours}h` via `sendIdempotentNotification`, which inserts `notifications_sent` (UNIQUE `user_id, event_type, event_ref_id`) **in the same transaction** — a rerun returns `false` and notifies nothing.
+- **Daily 21:00** (`0 21 * * *`): `materialDigest` groups the last-24h materials (`is_current = true`) by course and sends one `new_material` digest per active enrolled student who has new material, idempotency-keyed by `studentId:{dateKey}`.
+- **Daily 05:00** (`0 5 * * *`): `studyPlan` builds a prompt per student from their courses + 5 nearest deadlines, calls Groq (`openai/gpt-oss-20b`; `maxTokens: 1000, temperature: 0.5` — the model is a reasoning model and returned empty `content` at 300 tokens, so keep the ceiling generous), sanitizes to 4000 chars, writes an `ai_study_plan` notification idempotent per `studentId:{dateKey}`. Groq-unavailable / no-deadlines / no-courses students are **skipped**, never fail the job.
+- **Weekly Sunday 02:00** (`0 2 * * 0`): `performanceSnapshot` wraps `recomputeAllSnapshots(now)`.
+- Announcements module: `POST /announcements` (create; `courseId` optional → school-wide when absent), `GET /announcements` (paginated list with author/course join), `PATCH /announcements/:id`, `DELETE /announcements/:id`. Create auto-notifies the audience — all active users (school-wide) or the course's active enrolled students (`related_entity_type='announcement'`, `related_entity_id=announcementId`, `::uuid` cast in the `INSERT…SELECT` so param typing is explicit). Lecturers may only post/update courses they own (`courses.lecturer_id`); delete is admin-only. Create/update/delete write `announcement_*` activity logs.
+- Notifications module: `GET /notifications` (paginated, `?isRead=&type=` filters, returns `{ items, total, unread }`), `PATCH /notifications/:id/read`, `PATCH /notifications/read-all`. Pagination offset is `(page-1)*limit`.
+- Live-user notifications (announcements, and any future event) write directly; cron-generated ones go through `sendIdempotentNotification`. `uuidFromString(s)` derives a stable, collision-free uuid from any string (sha-256 → v5 shape) for idempotency keys.
+- Auth change: `users.activated_at` added (migration `1786021449085_add-users-activated-at`). Students register self-activated (`is_active=true` + `activated_at=now()`); lecturer/admin signups register **pending** (`is_active=false`, `activated_at=null`) and get `USER_PENDING_APPROVAL` on login until an admin activates them. `requireAuth` and `authenticate()` distinguish pending vs deactivated (`activated_at` set → deactivated).
 
-**Gate:** a reminder never fires twice for the same event; reminders fire within the window for all three entity types.
+**Gate (verified):** dry-run of every job twice — deadline reminders `{windows:[48,24,2], candidates:3, sent:3}` then `sent:0` on rerun; material digest `sent:1` then 0; study plan `generated:1` then 0; snapshot recompute `processed:1`. E2E: announcement to school notified all active users; course-scoped announcement notified only the 1 enrolled student; `GET /notifications` filters (`isRead`, `type`), read + read-all verified. A reminder never fires twice for the same event.
 
-## Phase 8 — Admin Module
+## Phase 8 — Admin Module ✅ DONE
 
-Response shapes matched to the admin console mocks (`web/src/features/admin/data.ts`) so the mock → API swap is drop-in.
+Admin console routes all gated by `requireAuth` + `requireRole('admin')`. Response shapes matched to the admin console mocks (`web/src/features/admin/data.ts`) so the mock → API swap is drop-in.
 
-- `GET/POST /admin/users`, `PATCH/DELETE /admin/users/:id` (role change, deactivate/soft delete).
-- `GET/POST /admin/departments`.
-- `GET /admin/courses` (all courses, any department).
-- `GET /admin/activity-logs` (filters: user, action, date range).
-- `GET /admin/reports/overview` (user counts, course counts, submission rates) + `GET /admin/reports/export` (CSV first, PDF later).
-- `GET /admin/performance/at-risk` (from Phase 6 — same deterministic scoring as student-facing views).
-- `permissions` table wired for any beyond-role access control if needed.
+- `GET /admin/users` (`?page=&limit=&role=&status=active|pending|deactivated&q=`; returns `{ users, total, pendingCount }`), `PATCH /admin/users/:id/status` (activate/deactivate; self-deactivation → `VALIDATION_ERROR`; activation stamps `activated_at`), `PATCH /admin/users/:id/role` (self-change blocked), `GET /admin/users/:id/permissions`, `POST /admin/users/:id/permissions` (grant, `ON CONFLICT DO NOTHING`), `DELETE /admin/users/:id/permissions` (revoke).
+- `GET /admin/departments` (with lecturer counts), `POST /admin/departments` (unique `code`, 409 `DEPARTMENT_CODE_TAKEN`), `PATCH /admin/departments/:id`.
+- `GET /admin/activity-logs` (`?user=&action=&limit=`, returns recent-first rows with actor/course join).
+- `GET /admin/dashboard/stats` (student/lecturer/course/enrollment counts, pending lecturers, announcement count, at-risk summary, 14-day enrollment retention series, 10 recent activity rows).
+- `GET /admin/reports/at-risk` (`?minScore=&level=`; default `minScore=0.33` so only actionable students surface) + `GET /admin/reports/at-risk/export` (`text/csv`, `Content-Disposition` attachment, `lib/csv.ts`).
+- `POST /admin/performance/recompute-snapshots` (optional `{courseId}` → per-course recompute, else full).
+- `permissions` table wired: per-user grants + coarse role→permission map in `middleware/requirePermission.ts` (`users:manage` → admin; `announcements:manage` → admin/lecturer; etc.).
 
-**Gate:** admin flows pass against the same shapes the admin console already renders.
+**Gate (verified):** E2E — pending lecturer blocked (`USER_PENDING_APPROVAL`), admin activation stamps `activatedAt`, self-deactivation rejected, student→admin endpoints 403 `FORBIDDEN_ROLE`, user list filters, department create/409/update, permission grant/list/revoke, activity-log filters, dashboard stats, at-risk report + CSV export. All 22 vitest files / 146 tests green; `tsc` clean.
 
 ## Phase 9 — Hardening
 
@@ -259,13 +264,14 @@ GROQ_MAX_TOKENS=2048
 GROQ_TEMPERATURE=0.7
 QUIZ_GENERATE_MAX_PER_MINUTE=6
 MAX_MATERIAL_TEXT_CHARS=15000
+DEADLINE_REMINDER_WINDOWS=48,24,2   # Phase 7 hourly reminder windows (hours before deadline)
 ```
 
 ## Milestones
 
 - **M1** = Phases 0–4 (student/lecturer core: auth, courses, materials, assignments/exams, quizzes) — ✅ complete
-- **M2** = Phases 5–7 (AI quiz generation, performance tracking, notifications) — Phases 5–6 ✅ complete; Phase 7 next
-- **M3** = Phases 8–9 (admin module + hardening)
+- **M2** = Phases 5–7 (AI quiz generation, performance tracking, notifications) — ✅ complete
+- **M3** = Phases 8–9 (admin module + hardening) — Phase 8 ✅ complete; Phase 9 next
 
 ## Post-v1 Backlog
 

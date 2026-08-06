@@ -31,12 +31,15 @@ All responses follow:
 
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
-| GET | `/admin/users` | admin | List/filter/search users |
-| POST | `/admin/users` | admin | Create lecturer/admin account |
-| PATCH | `/admin/users/:id` | admin | Update role, deactivate, etc. |
-| DELETE | `/admin/users/:id` | admin | Deactivate (soft delete) |
-| GET | `/admin/departments` | admin | List departments |
-| POST | `/admin/departments` | admin | Create department |
+| GET | `/admin/users` | admin | List/filter users. Query: `?page=&limit=&role=&status=active\|pending\|deactivated&q=`. Returns `{ users, total, pendingCount }` |
+| PATCH | `/admin/users/:userId/status` | admin | Activate/deactivate. Body `{ isActive }`. Self-deactivation → `VALIDATION_ERROR`. Activation stamps `activated_at` |
+| PATCH | `/admin/users/:userId/role` | admin | Change role. Self-change → `VALIDATION_ERROR` |
+| GET | `/admin/users/:userId/permissions` | admin | List a user's granted permissions |
+| POST | `/admin/users/:userId/permissions` | admin | Grant permission. Body `{ permission }` (idempotent) |
+| DELETE | `/admin/users/:userId/permissions` | admin | Revoke permission. Body `{ permission }` |
+| GET | `/admin/departments` | admin | List departments (with lecturer counts) |
+| POST | `/admin/departments` | admin | Create department. 409 `DEPARTMENT_CODE_TAKEN` on duplicate `code` |
+| PATCH | `/admin/departments/:id` | admin | Update department name/code |
 
 ## Courses
 
@@ -47,7 +50,6 @@ All responses follow:
 | POST | `/courses` | lecturer/admin | Create course |
 | PATCH | `/courses/:id` | owning lecturer/admin | Update course/outline |
 | POST | `/courses/:id/enroll` | student | Self-enroll (if open enrollment) |
-| GET | `/admin/courses` | admin | All courses, any department |
 
 ## Materials
 
@@ -99,24 +101,30 @@ All responses follow:
 | GET | `/performance/me` | student | Own overall snapshot + metrics: `{ overall: { snapshot, metrics } }` — GPA, per-course averages, missed-submission rate |
 | GET | `/performance/me/risk` | student | Own risk breakdown: `{ gpaDecline, missedSubmissionRate, quizDecline, lowEngagement, score, level, lastSnapshotDate }` (deterministic, `workflows.md` formula) |
 | GET | `/performance/courses/:id` | owning lecturer | Course aggregates + per-student rows (gpa, assignment/quiz %, risk score/level) |
-| GET | `/admin/performance/at-risk` | admin | Latest overall snapshot per student; default `minScore` = 0.33 (medium+) so only actionable students show. Overrides: `?minScore=0` (everyone with a snapshot), `?level=medium\|high` |
+| GET | `/admin/reports/at-risk` | admin | Latest overall snapshot per student; default `minScore` = 0.33 (medium+) so only actionable students show. Overrides: `?minScore=0` (everyone with a snapshot), `?level=medium\|high` |
 | POST | `/admin/performance/recompute-snapshots` | admin | One-off recompute (all students, or `?courseId=` for one course). Same code path as the weekly cron |
 
 ## Notifications
 
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
-| GET | `/notifications` | authenticated | List own notifications (paginated) |
-| PATCH | `/notifications/:id/read` | authenticated | Mark as read |
-| POST | `/announcements` | lecturer/admin | Post announcement (course-scoped or system-wide) |
+| GET | `/notifications` | authenticated | List own notifications. `?page=&limit=&isRead=&type=`. Returns `{ items, total, unread }` |
+| PATCH | `/notifications/:id/read` | authenticated | Mark one notification as read. 404 `NOTIFICATION_NOT_FOUND` |
+| PATCH | `/notifications/read-all` | authenticated | Mark all own notifications read. Returns `{ updated }` |
+| POST | `/announcements` | lecturer/admin | Create announcement. Body `{ title, body, courseId? }` — courseId absent = school-wide. Returns `{ announcement, notified }` (count of users notified). Lecturer may only post to courses they own (`NOT_COURSE_OWNER` / `COURSE_NOT_FOUND`) |
+| GET | `/announcements` | authenticated | List announcements (paginated, newest first) with author + course join |
+| PATCH | `/announcements/:id` | lecturer/admin | Update title/body/course scope. Owning lecturer or admin (`ANNOUNCEMENT_NOT_FOUND` otherwise) |
+| DELETE | `/announcements/:id` | admin | Delete announcement |
 
 ## Admin — System
 
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
-| GET | `/admin/activity-logs` | admin | Filterable audit log |
-| GET | `/admin/reports/overview` | admin | System-wide usage/report summary |
-| GET | `/admin/reports/export` | admin | CSV/PDF export of a given report |
+| GET | `/admin/dashboard/stats` | admin | Overview: `{ totalStudents, totalLecturers, activeCourses, pendingLecturers, totalEnrollments, announcements, atRisk: { count, byLevel }, retention: { labels, values }, recentActivity }` |
+| GET | `/admin/activity-logs` | admin | Filterable audit log. `?user=&action=&limit=` (action is ILIKE) |
+| GET | `/admin/reports/at-risk` | admin | Snapshot-driven at-risk report (`?minScore=&level=`) |
+| GET | `/admin/reports/at-risk/export` | admin | Same report as CSV (`text/csv`, `Content-Disposition: attachment`) |
+| POST | `/admin/performance/recompute-snapshots` | admin | One-off snapshot recompute (`{ courseId? }`) |
 
 ---
 
@@ -148,6 +156,12 @@ All responses follow:
 | `TOO_MANY_REQUESTS` | Rate limit exceeded (429; quiz generation defaults to 6/min) |
 | `VALIDATION_ERROR` | Request body failed schema validation |
 | `NOT_FOUND` | Resource does not exist or not visible to requester |
+| `USER_PENDING_APPROVAL` | Lecturer/admin account exists but is inactive, awaiting admin approval (403 on login) |
+| `USER_DEACTIVATED` | Account was deactivated by an admin (403 on login/refresh) |
+| `DEPARTMENT_CODE_TAKEN` | Department `code` already exists (409) |
+| `COURSE_NOT_FOUND` | Course does not exist or not visible to requester |
+| `ANNOUNCEMENT_NOT_FOUND` | Announcement does not exist or not visible to requester (404) |
+| `NOTIFICATION_NOT_FOUND` | Notification id not found or not owned by requester (404) |
 
 ## Conventions
 

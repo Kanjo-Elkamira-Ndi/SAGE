@@ -40,7 +40,7 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
 
   try {
     const { rows } = await pool.query(
-      'SELECT id, email, role, department_id, is_active FROM users WHERE id = $1',
+      'SELECT id, email, role, department_id, is_active, activated_at FROM users WHERE id = $1',
       [payload.sub],
     );
     const row = rows[0];
@@ -49,7 +49,12 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
       return;
     }
     if (!row.is_active) {
-      next(new AppError('USER_DEACTIVATED', 'Account has been deactivated', 403));
+      const pending = row.activated_at == null;
+      next(
+        pending
+          ? new AppError('USER_PENDING_APPROVAL', 'Account is awaiting admin approval', 403)
+          : new AppError('USER_DEACTIVATED', 'Account has been deactivated', 403),
+      );
       return;
     }
 
