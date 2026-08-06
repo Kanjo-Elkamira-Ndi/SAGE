@@ -77,7 +77,7 @@ export async function listCoursesForStudent(
        AND c.is_active = true
      ORDER BY c.title
      LIMIT $2 OFFSET $3`,
-    [studentId, limit, page * limit],
+    [studentId, limit, (page - 1) * limit],
   );
   return { items: result.rows.map(toCourse), total };
 }
@@ -94,7 +94,7 @@ export async function listCoursesForLecturer(
   const total = totalResult.rows[0].total as number;
   const result = await pool.query(
     `${COURSE_BASE_SELECT} WHERE c.lecturer_id = $1 ORDER BY c.title LIMIT $2 OFFSET $3`,
-    [lecturerId, limit, page * limit],
+    [lecturerId, limit, (page - 1) * limit],
   );
   return { items: result.rows.map(toCourse), total };
 }
@@ -107,7 +107,7 @@ export async function listAllCourses(
   const total = totalResult.rows[0].total as number;
   const result = await pool.query(
     `${COURSE_BASE_SELECT} ORDER BY c.created_at DESC LIMIT $1 OFFSET $2`,
-    [limit, page * limit],
+    [limit, (page - 1) * limit],
   );
   return { items: result.rows.map(toCourse), total };
 }

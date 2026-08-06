@@ -7,9 +7,10 @@ import 'student_shell.dart';
 /// Standard frame for every student screen: Stitch-style white app bar with
 /// royal-blue text, gold active pill bottom nav, and the SAGE student tokens.
 class StudentPageScaffold extends StatelessWidget {
-  const StudentPageScaffold({super.key, required this.child});
+  const StudentPageScaffold({super.key, required this.child, this.floatingActionButton});
 
   final Widget child;
+  final Widget? floatingActionButton;
 
   @override
   Widget build(BuildContext context) {
@@ -23,6 +24,7 @@ class StudentPageScaffold extends StatelessWidget {
       bodyBackground: StudentColors.background,
       navActiveBackground: StudentColors.secondaryContainer,
       navActiveForeground: StudentColors.onSecondaryContainer,
+      floatingActionButton: floatingActionButton,
       child: child,
     );
   }

@@ -16,10 +16,11 @@ class SageAssistantPage extends StatefulWidget {
 class _SageAssistantPageState extends State<SageAssistantPage> {
   final _controller = TextEditingController();
   final _scroll = ScrollController();
-  final List<({String text, bool fromUser})> _messages = [
+  final List<({String text, bool fromUser})> _initialMessages = [
     (text: 'Good morning, Alex! 👋 How can I help you today?', fromUser: false),
     (text: 'I can explain concepts, summarize notes, or suggest study plans.', fromUser: false),
   ];
+  late final List<({String text, bool fromUser})> _messages = [..._initialMessages];
 
   @override
   void dispose() {
@@ -50,9 +51,35 @@ class _SageAssistantPageState extends State<SageAssistantPage> {
     });
   }
 
+  /// Starts a fresh conversation and scrolls back to the top.
+  void _startNewChat() {
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(_initialMessages);
+    });
+    _controller.clear();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.animateTo(
+          0,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return StudentPageScaffold(
+      floatingActionButton: FloatingActionButton(
+        onPressed: _startNewChat,
+        tooltip: 'New conversation',
+        backgroundColor: StudentColors.primary,
+        foregroundColor: Colors.white,
+        child: const Icon(Icons.add, size: 28),
+      ),
       child: Column(
         children: [
           // Chat header

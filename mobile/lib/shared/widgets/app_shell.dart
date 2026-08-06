@@ -44,6 +44,7 @@ class AppShell extends ConsumerWidget {
     this.navActiveBackground,
     this.navActiveForeground,
     this.avatarImage,
+    this.floatingActionButton,
   });
 
   final String title;
@@ -60,6 +61,9 @@ class AppShell extends ConsumerWidget {
   final Color? navActiveBackground;
   final Color? navActiveForeground;
   final ImageProvider? avatarImage;
+
+  /// Optional bottom-right action (e.g. the AI chat "+" new-conversation button).
+  final Widget? floatingActionButton;
 
   int _activeIndex(BuildContext context, String currentPath) {
     for (var i = 0; i < destinations.length; i++) {
@@ -145,6 +149,7 @@ class AppShell extends ConsumerWidget {
       ),
       drawer: _SageDrawer(drawerSections: drawerSections),
       body: SafeArea(child: child),
+      floatingActionButton: floatingActionButton,
       bottomNavigationBar: NavigationBarTheme(
         data: NavigationBarThemeData(
           backgroundColor: bodyBackground,
