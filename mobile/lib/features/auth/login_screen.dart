@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../data/repositories/auth_repository.dart';
+import '../../core/sage_exception.dart';
 import '../onboarding/onboarding_colors.dart';
 import 'auth_controller.dart';
 import 'auth_scaffold.dart';
@@ -44,7 +44,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             password: password,
           );
       // Router redirects to the role home once the session is authenticated.
-    } on SageAuthException catch (e) {
+    } on SageException catch (e) {
       _showError(e.message);
     } finally {
       if (mounted) setState(() => _busy = false);

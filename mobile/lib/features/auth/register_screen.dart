@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/sage_exception.dart';
 import '../../data/models/user.dart';
-import '../../data/repositories/auth_repository.dart';
 import '../onboarding/onboarding_colors.dart';
 import 'auth_controller.dart';
 import 'auth_scaffold.dart';
@@ -66,7 +66,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           const SnackBar(content: Text('Account created! You can now log in.')),
         );
       context.pushReplacement('/auth/login');
-    } on SageAuthException catch (e) {
+    } on SageException catch (e) {
       _showError(e.message);
     } finally {
       if (mounted) setState(() => _busy = false);

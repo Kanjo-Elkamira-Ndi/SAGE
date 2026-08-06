@@ -1,3 +1,4 @@
+import '../../../core/sage_exception.dart';
 import '../../models/user.dart';
 import '../auth_repository.dart';
 
@@ -50,13 +51,13 @@ class MockAuthRepository implements AuthRepository {
   }) async {
     final normalized = email.toLowerCase().trim();
     if (normalized.isEmpty) {
-      throw const SageAuthException('Please enter your email address.');
+      throw const SageException(code: 'AUTH_FAILED', message: 'Please enter your email address.');
     }
     if (password.isEmpty) {
-      throw const SageAuthException('Please enter a password.');
+      throw const SageException(code: 'AUTH_FAILED', message: 'Please enter a password.');
     }
     if (_registered.containsKey(normalized)) {
-      throw const SageAuthException('An account already exists for that email.');
+      throw const SageException(code: 'AUTH_FAILED', message: 'An account already exists for that email.');
     }
     final user = User(
       id: 'u-${_registered.length + 1}-$normalized',
@@ -72,7 +73,7 @@ class MockAuthRepository implements AuthRepository {
   @override
   Future<User> signIn({required String email, required String password}) async {
     if (password.isEmpty) {
-      throw const SageAuthException('Please enter your password.');
+      throw const SageException(code: 'AUTH_FAILED', message: 'Please enter your password.');
     }
     final normalized = email.toLowerCase().trim();
     final user = switch (normalized) {
@@ -82,7 +83,7 @@ class MockAuthRepository implements AuthRepository {
       _ => null,
     };
     if (user == null) {
-      throw const SageAuthException('No account found for that email.');
+      throw const SageException(code: 'AUTH_FAILED', message: 'No account found for that email.');
     }
     _session = user;
     return user;
