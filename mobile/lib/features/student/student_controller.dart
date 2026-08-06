@@ -1,33 +1,21 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/app_providers.dart';
 import '../../core/pagination.dart';
+import '../../data/models/api/announcement.dart';
+import '../../data/models/api/assignment.dart';
 import '../../data/models/api/course.dart';
+import '../../data/models/api/exam.dart';
+import '../../data/models/api/material.dart';
 import '../../data/models/api/notification.dart';
 import '../../data/models/api/performance.dart';
-import '../../data/models/student.dart';
-import '../../data/repositories/api/api_course_repository.dart';
-import '../../data/repositories/api/api_notification_repository.dart';
-import '../../data/repositories/api/api_performance_repository.dart';
-import '../../data/repositories/mock/mock_student_repository.dart';
-import '../../data/repositories/student_repository.dart';
+import '../../data/models/api/quiz.dart';
+import '../../data/repositories/api_repository_providers.dart';
 
-/// ---- API-backed bindings (`api-wiring-plan.md` §A.2). ---------------------
-/// The student Dashboard, Courses and Notifications screens read these;
-/// the remaining screens still use the mock `studentControllerProvider`
-/// until their slice lands.
+export '../../data/repositories/api_repository_providers.dart';
 
-final apiCourseRepositoryProvider = Provider<ApiCourseRepository>(
-  (ref) => ApiCourseRepository(client: ref.watch(apiClientProvider)),
-);
-
-final apiNotificationRepositoryProvider = Provider<ApiNotificationRepository>(
-  (ref) => ApiNotificationRepository(client: ref.watch(apiClientProvider)),
-);
-
-final apiPerformanceRepositoryProvider = Provider<ApiPerformanceRepository>(
-  (ref) => ApiPerformanceRepository(client: ref.watch(apiClientProvider)),
-);
+/// Student API bindings (`api-wiring-plan.md` §A.2). All student screens read
+/// these providers; the mock `studentRepositoryProvider`/`studentController`
+/// bindings were removed with the mock layer.
 
 /// Enrolled courses (page 1, default limit).
 final apiCoursesProvider = FutureProvider<Page<ApiCourse>>(
@@ -49,34 +37,112 @@ final apiRiskProvider = FutureProvider<ApiRiskDetail>(
   (ref) => ref.watch(apiPerformanceRepositoryProvider).myRisk(),
 );
 
-/// ---- Mock binding (unwired screens). --------------------------------------
-
-/// Student data binding — the single swap point for the Phase 6 API.
-final studentRepositoryProvider = Provider<StudentRepository>(
-  (ref) => MockStudentRepository(),
+/// Single course from the enrolled list.
+final apiCourseByIdProvider = FutureProvider.family<ApiCourse, String>(
+  (ref, id) async {
+    final page = await ref.watch(apiCoursesProvider.future);
+    return page.items.firstWhere(
+      (c) => c.id == id,
+      orElse: () => throw StateError('Course $id not found'),
+    );
+  },
 );
 
-/// Thin read-only controller exposing seeded student data to widgets.
-class StudentController extends Notifier<List<Object?>> {
-  @override
-  List<Object?> build() => const [];
+/// Materials for one course.
+final apiMaterialsForCourseProvider =
+    FutureProvider.family<List<ApiMaterial>, String>(
+  (ref, courseId) =>
+      ref.watch(apiMaterialRepositoryProvider).listForCourse(courseId),
+);
 
-  StudentRepository get _repo => ref.read(studentRepositoryProvider);
+/// Assignments for one course.
+final apiAssignmentsForCourseProvider =
+    FutureProvider.family<List<ApiAssignment>, String>(
+  (ref, courseId) =>
+      ref.watch(apiAssignmentRepositoryProvider).listForCourse(courseId),
+);
 
-  List<StudentCourse> get courses => _repo.getCourses();
+/// Quizzes for one course.
+final apiQuizzesForCourseProvider = FutureProvider.family<List<ApiQuiz>, String>(
+  (ref, courseId) =>
+      ref.watch(apiQuizRepositoryProvider).listForCourse(courseId),
+);
 
-  StudentCourse courseById(String id) => _repo.courseById(id);
+/// Exams for one course.
+final apiExamsForCourseProvider = FutureProvider.family<List<ApiExam>, String>(
+  (ref, courseId) => ref.watch(apiExamRepositoryProvider).listForCourse(courseId),
+);
 
-  List<Assignment> get assignments => _repo.getAssignments();
+/// School-wide announcements (used for the course feed on course detail).
+final apiAnnouncementsProvider = FutureProvider<Page<ApiAnnouncement>>(
+  (ref) => ref.watch(apiAnnouncementRepositoryProvider).list(),
+);
 
-  Assignment assignmentById(String id) => _repo.assignmentById(id);
+/// Assignments across every enrolled course (Tasks tab). The API only exposes
+/// per-course lists, so this fans out over the enrolled courses.
+final apiAllAssignmentsProvider = FutureProvider<List<ApiAssignment>>(
+  (ref) async {
+    final courses = await ref.watch(apiCoursesProvider.future);
+    final results = <ApiAssignment>[];
+    for (final course in courses.items) {
+      results.addAll(
+        await ref.watch(apiAssignmentsForCourseProvider(course.id).future),
+      );
+    }
+    return results;
+  },
+);
 
-  List<Quiz> get quizzes => _repo.getQuizzes();
+/// Quizzes across every enrolled course (Tasks tab).
+final apiAllQuizzesProvider = FutureProvider<List<ApiQuiz>>(
+  (ref) async {
+    final courses = await ref.watch(apiCoursesProvider.future);
+    final results = <ApiQuiz>[];
+    for (final course in courses.items) {
+      results.addAll(
+        await ref.watch(apiQuizzesForCourseProvider(course.id).future),
+      );
+    }
+    return results;
+  },
+);
 
-  Quiz quizById(String id) => _repo.quizById(id);
+/// Course code by id — resolves `ApiAssignment.courseId` → code for badges.
+String courseCodeOf(List<ApiCourse> courses, String courseId) =>
+    courses.firstWhere(
+      (c) => c.id == courseId,
+      orElse: () => ApiCourse(
+        id: courseId,
+        code: '?',
+        title: '?',
+        lecturerName: '',
+      ),
+    ).code;
 
-  List<AppNotification> get notifications => _repo.getNotifications();
-}
+/// Single assignment by id (submit screen). Search across enrolled courses.
+final apiAssignmentByIdProvider = FutureProvider.family<ApiAssignment, String>(
+  (ref, id) async {
+    final all = await ref.watch(apiAllAssignmentsProvider.future);
+    return all.firstWhere(
+      (a) => a.id == id,
+      orElse: () => throw StateError('Assignment $id not found'),
+    );
+  },
+);
 
-final studentControllerProvider =
-    NotifierProvider<StudentController, List<Object?>>(StudentController.new);
+/// Single quiz by id (attempt + results headers).
+final apiQuizByIdProvider = FutureProvider.family<ApiQuiz, String>(
+  (ref, id) async {
+    final all = await ref.watch(apiAllQuizzesProvider.future);
+    return all.firstWhere(
+      (q) => q.id == id,
+      orElse: () => throw StateError('Quiz $id not found'),
+    );
+  },
+);
+
+/// Latest attempt results for a quiz (`GET /quizzes/:id/results`).
+final apiQuizResultsProvider =
+    FutureProvider.family<ApiQuizResultsDetail, String>(
+  (ref, quizId) => ref.watch(apiQuizRepositoryProvider).results(quizId),
+);

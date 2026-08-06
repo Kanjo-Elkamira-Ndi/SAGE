@@ -3,60 +3,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/sage_colors.dart';
-import '../../data/models/student.dart';
+import '../../data/models/api/quiz.dart';
 import '../../shared/widgets/sage_button.dart';
 import '../../shared/widgets/sage_card.dart';
 import '../../shared/widgets/sage_circular_progress.dart';
 import 'student_colors.dart';
 import 'student_controller.dart';
-
-/// Carried from the in-progress page to the results page via go_router `extra`.
-class QuizResultsPayload {
-  const QuizResultsPayload(this.score, this.answers);
-
-  final int score;
-  final List<int?> answers;
-}
+import 'student_widgets.dart';
 
 /// Quiz results — score ring, grade, and per-question review with
-/// correct/incorrect callouts (Stitch quiz results screen).
+/// correct/incorrect callouts (Stitch quiz results screen). Wired to
+/// `GET /quizzes/:id/results` (`api-wiring-plan.md` §A.3).
 class QuizResultsPage extends ConsumerWidget {
   const QuizResultsPage({super.key, required this.quizId});
 
   final String quizId;
 
-  static const _questions = <QuizQuestion>[
-    QuizQuestion(
-      text: 'Which data structure uses FIFO ordering?',
-      options: ['Stack', 'Queue', 'Linked List', 'Hash Table'],
-      answerIndex: 1,
-    ),
-    QuizQuestion(
-      text: 'What is the time complexity of binary search?',
-      options: ['O(n)', 'O(n log n)', 'O(log n)', 'O(1)'],
-      answerIndex: 2,
-    ),
-    QuizQuestion(
-      text: 'Which sorting algorithm has the best average case?',
-      options: ['Bubble Sort', 'Insertion Sort', 'Merge Sort', 'Selection Sort'],
-      answerIndex: 2,
-    ),
-  ];
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final quiz = ref.watch(studentControllerProvider.notifier).quizById(quizId);
-    final payload = GoRouterState.of(context).extra as QuizResultsPayload?;
-    final score = payload?.score ?? quiz.score ?? 0;
-    final answers = payload?.answers ?? [];
-    final grade = switch (score) {
-      >= 90 => 'A',
-      >= 80 => 'B',
-      >= 70 => 'C',
-      >= 60 => 'D',
-      _ => 'F',
-    };
-    final passed = score >= 70;
+    final resultsAsync = ref.watch(apiQuizResultsProvider(quizId));
 
     return Scaffold(
       backgroundColor: StudentColors.background,
@@ -73,112 +38,148 @@ class QuizResultsPage extends ConsumerWidget {
           ),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-        children: [
-          Text(
-            quiz.title,
-            style: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-              color: StudentColors.primary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            quiz.course,
-            style: const TextStyle(
-              fontSize: 13,
-              color: StudentColors.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 20),
+      body: resultsAsync.hasError
+          ? StudentEmptyState(
+              icon: Icons.cloud_off_outlined,
+              title: 'Could not load results',
+              description: 'Check your connection and try again.',
+              actionLabel: 'Retry',
+              onAction: () => ref.invalidate(apiQuizResultsProvider(quizId)),
+            )
+          : resultsAsync.value == null
+              ? const Center(
+                  child: CircularProgressIndicator(color: StudentColors.primary),
+                )
+              : _ResultsBody(results: resultsAsync.value!, quizId: quizId),
+    );
+  }
+}
 
-          // Score ring
-          Center(
-            child: SageCircularProgress(
-              value: score / 100,
-              size: 132,
-              strokeWidth: 12,
-              color: passed ? StudentColors.success : StudentColors.error,
-              label: '$score%',
-              subLabel: 'Grade $grade',
-            ),
-          ),
-          const SizedBox(height: 16),
-          Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(
-                color: passed
-                    ? StudentColors.successSoft
-                    : StudentColors.errorContainer,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                passed ? 'Passed \u2014 great work!' : 'Needs improvement',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: passed
-                      ? StudentColors.success
-                      : StudentColors.error,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
+class _ResultsBody extends StatelessWidget {
+  const _ResultsBody({required this.results, required this.quizId});
 
-          const Text(
-            'Question Review',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: StudentColors.primary,
+  final ApiQuizResultsDetail results;
+  final String quizId;
+
+  @override
+  Widget build(BuildContext context) {
+    final percent = results.total > 0
+        ? (results.score / results.total * 100).round()
+        : 0;
+    final grade = switch (percent) {
+      >= 90 => 'A',
+      >= 80 => 'B',
+      >= 70 => 'C',
+      >= 60 => 'D',
+      _ => 'F',
+    };
+    final passed = percent >= 70;
+    final questions = results.questions;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+      children: [
+        Text(
+          results.title,
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: StudentColors.primary,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${results.correctCount}/${results.questionCount} correct',
+          style: const TextStyle(
+            fontSize: 13,
+            color: StudentColors.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // Score ring
+        Center(
+          child: SageCircularProgress(
+            value: percent / 100,
+            size: 132,
+            strokeWidth: 12,
+            color: passed ? StudentColors.success : StudentColors.error,
+            label: '$percent%',
+            subLabel: 'Grade $grade',
+          ),
+        ),
+        const SizedBox(height: 16),
+        Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: passed
+                  ? StudentColors.successSoft
+                  : StudentColors.errorContainer,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              passed ? 'Passed \u2014 great work!' : 'Needs improvement',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: passed ? StudentColors.success : StudentColors.error,
+              ),
             ),
           ),
+        ),
+        const SizedBox(height: 24),
+
+        const Text(
+          'Question Review',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: StudentColors.primary,
+          ),
+        ),
+        const SizedBox(height: 10),
+        for (final question in questions) ...[
+          _ReviewCard(question: question),
           const SizedBox(height: 10),
-          for (var i = 0; i < _questions.length; i++)
-            _ReviewCard(
-              question: _questions[i],
-              chosenIndex: i < answers.length ? answers[i] : null,
-            ),
-          const SizedBox(height: 20),
-
-          Row(
-            children: [
-              Expanded(
-                child: SageButton(
-                  variant: SageButtonVariant.outline,
-                  onPressed: () => context.go('/student/quiz/${quiz.id}'),
-                  child: const Text('Retry Quiz'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: SageButton(
-                  variant: SageButtonVariant.accent,
-                  onPressed: () => context.go('/student/tasks'),
-                  child: const Text('Back to Tasks'),
-                ),
-              ),
-            ],
-          ),
         ],
-      ),
+        const SizedBox(height: 20),
+
+        Row(
+          children: [
+            Expanded(
+              child: SageButton(
+                variant: SageButtonVariant.outline,
+                onPressed: () => context.go('/student/quiz/$quizId'),
+                child: const Text('Retry Quiz'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: SageButton(
+                variant: SageButtonVariant.accent,
+                onPressed: () => context.go('/student/tasks'),
+                child: const Text('Back to Tasks'),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
 
 class _ReviewCard extends StatelessWidget {
-  const _ReviewCard({required this.question, required this.chosenIndex});
+  const _ReviewCard({required this.question});
 
-  final QuizQuestion question;
-  final int? chosenIndex;
+  final ApiQuizReviewQuestion question;
 
   @override
   Widget build(BuildContext context) {
-    final correct = chosenIndex == question.answerIndex;
+    final options = question.options ?? const <String>[];
+    final chosenIndex = options.indexOf(question.yourAnswer);
+    final correctIndex = options.indexOf(question.correctAnswer);
+    final answered = chosenIndex >= 0;
 
     return SageCard(
       padding: const EdgeInsets.all(14),
@@ -189,20 +190,20 @@ class _ReviewCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
-                correct
+                question.correct
                     ? Icons.check_circle
-                    : chosenIndex == null
+                    : !answered
                         ? Icons.help_outline
                         : Icons.cancel,
                 size: 18,
-                color: correct
+                color: question.correct
                     ? StudentColors.success
                     : StudentColors.error,
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  question.text,
+                  question.questionText,
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -215,21 +216,29 @@ class _ReviewCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Correct answer: ${question.options[question.answerIndex]}',
+            question.correctAnswer.isEmpty
+                ? 'Correct answer: ${correctIndex >= 0 ? options[correctIndex] : '—'}'
+                : 'Correct answer: ${question.correctAnswer}',
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
               color: StudentColors.success,
             ),
           ),
-          if (chosenIndex != null && chosenIndex != question.answerIndex) ...[
+          if (answered && !question.correct) ...[
             const SizedBox(height: 4),
             Text(
-              'Your answer: ${question.options[chosenIndex!]}',
+              'Your answer: ${question.yourAnswer}',
               style: const TextStyle(
                 fontSize: 12,
                 color: StudentColors.error,
               ),
+            ),
+          ] else if (!answered) ...[
+            const SizedBox(height: 4),
+            const Text(
+              'Not answered',
+              style: TextStyle(fontSize: 12, color: StudentColors.error),
             ),
           ],
         ],

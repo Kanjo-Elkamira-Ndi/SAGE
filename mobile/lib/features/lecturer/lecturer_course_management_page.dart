@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/models/lecturer.dart';
-import '../../shared/widgets/sage_badge.dart';
+import '../../core/app_providers.dart';
+import '../../core/sage_exception.dart';
+import '../../data/models/api/announcement.dart';
+import '../../data/models/api/course.dart';
+import '../../data/models/api/material.dart';
 import '../../shared/widgets/sage_card.dart';
 import 'lecturer_colors.dart';
 import 'lecturer_controller.dart';
@@ -10,7 +15,8 @@ import 'lecturer_scaffold.dart';
 import 'lecturer_widgets.dart';
 
 /// Course management panel — "CS402: Software Architecture" reference screen.
-/// Tabs: Materials, Attendance, Announcements.
+/// Tabs: Materials, Attendance, Announcements. Attendance is demo-only until
+/// the attendance module ships.
 class LecturerCourseManagementPage extends ConsumerStatefulWidget {
   const LecturerCourseManagementPage({super.key, this.courseId});
 
@@ -27,122 +33,170 @@ class _LecturerCourseManagementPageState
 
   @override
   Widget build(BuildContext context) {
-    final controller = ref.watch(lecturerControllerProvider.notifier);
-    final course = controller.courseById(widget.courseId ?? 'cs402');
+    final coursesAsync = ref.watch(lecturerApiCoursesProvider);
+    final resolvedCourseId =
+        widget.courseId ?? (coursesAsync.value?.items.isNotEmpty == true ? coursesAsync.value!.items.first.id : null);
+    final courseId = resolvedCourseId;
+
+    if (courseId == null) {
+      return LecturerPageScaffold(
+        child: coursesAsync.isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : const LecturerEmptyState(
+                icon: Icons.menu_book_outlined,
+                title: 'No courses yet',
+                description:
+                    'You are not teaching any courses in the current semester.',
+              ),
+      );
+    }
+
+    final courseAsync = ref.watch(lecturerApiCourseByIdProvider(courseId));
 
     return LecturerPageScaffold(
-      title: '${course.code}: ${course.name}',
+      title: '${courseAsync.value?.code ?? ''} Course Management',
       child: Column(
         children: [
-          // Next lecture + avg attendance stats
-          Container(
-            margin: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: LecturerColors.primary,
-              borderRadius: BorderRadius.circular(16),
+          if (courseAsync.isLoading)
+            const Expanded(
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (courseAsync.hasError)
+            Expanded(
+              child: Center(
+                child: TextButton(
+                  onPressed: () {
+                    ref.invalidate(lecturerApiCourseByIdProvider(courseId));
+                  },
+                  child: const Text('Retry'),
+                ),
+              ),
+            )
+          else ...[
+            _CourseBanner(course: courseAsync.value!),
+            // Tabs
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: Row(
+                children: [
+                  _TabButton(
+                    label: 'Materials',
+                    selected: _tab == 0,
+                    onTap: () => setState(() => _tab = 0),
+                  ),
+                  _TabButton(
+                    label: 'Attendance',
+                    selected: _tab == 1,
+                    onTap: () => setState(() => _tab = 1),
+                  ),
+                  _TabButton(
+                    label: 'Announcements',
+                    selected: _tab == 2,
+                    onTap: () => setState(() => _tab = 2),
+                  ),
+                ],
+              ),
             ),
-            child: Row(
+            Expanded(
+              child: switch (_tab) {
+                0 => _MaterialsTab(courseId: courseId),
+                1 => const _AttendanceTab(),
+                _ => _AnnouncementsTab(courseId: courseId),
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CourseBanner extends StatelessWidget {
+  const _CourseBanner({required this.course});
+
+  final ApiCourse course;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = [
+      if (course.departmentName?.isNotEmpty == true) course.departmentName!,
+      if (course.semester?.isNotEmpty == true) course.semester!,
+      course.lecturerName,
+    ].join(' \u2022 ');
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: LecturerColors.primary,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Next Lecture',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.6,
-                          color: LecturerColors.onPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        course.nextLecture ?? 'TBA',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: LecturerColors.onPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        course.lectureHall ?? '',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: LecturerColors.onPrimary,
-                        ),
-                      ),
-                    ],
+                Text(
+                  course.code,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.6,
+                    color: LecturerColors.onPrimary,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.groups_outlined,
-                          size: 16,
-                          color: LecturerColors.onPrimary,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '${course.avgAttendance?.round() ?? 0}%',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: LecturerColors.onPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    const Text(
-                      'Avg. Attendance',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: LecturerColors.onPrimary,
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 4),
+                Text(
+                  course.title,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: LecturerColors.onPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: LecturerColors.onPrimary,
+                  ),
                 ),
               ],
             ),
           ),
-
-          // Tabs
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-            child: Row(
-              children: [
-                _TabButton(
-                  label: 'Materials',
-                  selected: _tab == 0,
-                  onTap: () => setState(() => _tab = 0),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.groups_outlined,
+                    size: 16,
+                    color: LecturerColors.onPrimary,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${course.enrolledCount}',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: LecturerColors.onPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              const Text(
+                'Enrolled',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: LecturerColors.onPrimary,
                 ),
-                _TabButton(
-                  label: 'Attendance',
-                  selected: _tab == 1,
-                  onTap: () => setState(() => _tab = 1),
-                ),
-                _TabButton(
-                  label: 'Announcements',
-                  selected: _tab == 2,
-                  onTap: () => setState(() => _tab = 2),
-                ),
-              ],
-            ),
-          ),
-
-          Expanded(
-            child: switch (_tab) {
-              0 => _MaterialsTab(course: course),
-              1 => _AttendanceTab(course: course),
-              _ => _AnnouncementsTab(course: course),
-            },
+              ),
+            ],
           ),
         ],
       ),
@@ -199,157 +253,185 @@ class _TabButton extends StatelessWidget {
   }
 }
 
-class _MaterialsTab extends StatelessWidget {
-  const _MaterialsTab({required this.course});
+class _MaterialsTab extends ConsumerStatefulWidget {
+  const _MaterialsTab({required this.courseId});
 
-  final LecturerCourse course;
+  final String courseId;
+
+  @override
+  ConsumerState<_MaterialsTab> createState() => _MaterialsTabState();
+}
+
+class _MaterialsTabState extends ConsumerState<_MaterialsTab> {
+  bool _uploading = false;
+
+  Future<void> _upload() async {
+    final name = await _promptFileName();
+    if (name == null || name.trim().isEmpty) return;
+
+    setState(() => _uploading = true);
+    try {
+      final repo = ref.read(apiMaterialRepositoryProvider);
+      final upload = await repo.uploadUrl(
+        courseId: widget.courseId,
+        fileName: name.trim(),
+        contentType: 'application/pdf',
+        fileSizeBytes: 1024 * 1024,
+      );
+      final bytes = utf8.encode('SAGE course material \u2014 $name');
+      await ref
+          .read(apiClientProvider)
+          .uploadToSignedUrl(
+            upload.uploadUrl,
+            bytes: bytes,
+            contentType: 'application/pdf',
+          );
+      await repo.finalize(
+        courseId: widget.courseId,
+        storageKey: upload.storageKey,
+        title: name.trim(),
+        contentType: 'application/pdf',
+        fileSizeBytes: bytes.length,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$name uploaded.')),
+        );
+      }
+      ref.invalidate(lecturerMaterialsForCourseProvider(widget.courseId));
+    } on SageException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<String?> _promptFileName() {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Upload material'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'File name',
+            hintText: 'e.g. Module 3 Lecture Notes',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Upload'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final materialsAsync =
+        ref.watch(lecturerMaterialsForCourseProvider(widget.courseId));
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
       children: [
         LecturerSectionHeader(
           title: 'Course Resources',
-          trailing: 'Upload',
-          onTrailingTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Upload a file to this course.')),
-            );
-          },
+          trailing: _uploading ? 'Uploading\u2026' : 'Upload',
+          onTrailingTap: _uploading ? null : _upload,
         ),
         const SizedBox(height: 10),
-        SageCard(
-          padding: const EdgeInsets.all(4),
-          child: Column(
+        if (materialsAsync.isLoading)
+          const Column(
             children: [
-              for (final (i, resource) in course.resources.indexed) ...[
-                if (i > 0)
-                  const Divider(
-                    height: 1,
-                    color: LecturerColors.outlineVariant,
-                    indent: 56,
-                  ),
-                _ResourceRow(resource: resource),
-              ],
+              LecturerSkeletonBlock(height: 56, radius: 12),
+              SizedBox(height: 10),
+              LecturerSkeletonBlock(height: 56, radius: 12),
             ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        LecturerSectionHeader(title: 'Today\u2019s Session'),
-        const SizedBox(height: 10),
-        SageCard(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Oct 24, 2024 \u2022 14:00 - 16:00',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: LecturerColors.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  LecturerTag(
-                    label: 'Active Now',
-                    variant: SageBadgeVariant.success,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Self-Check In',
+          )
+        else if (materialsAsync.hasError)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                'Could not load course materials.',
                 style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: LecturerColors.primary,
-                ),
-              ),
-              const SizedBox(height: 2),
-              const Text(
-                'Allow students to mark present',
-                style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 13,
                   color: LecturerColors.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('QR code shown.')),
-                        );
-                      },
-                      icon: const Icon(Icons.qr_code_2, size: 18),
-                      label: const Text('Show QR'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: LecturerColors.primary,
-                        side: const BorderSide(color: LecturerColors.primary),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
+            ),
+          )
+        else if (materialsAsync.value!.isEmpty)
+          const LecturerEmptyState(
+            icon: Icons.folder_open,
+            title: 'No materials yet',
+            description: 'Upload the first file for this course.',
+          )
+        else
+          SageCard(
+            padding: const EdgeInsets.all(4),
+            child: Column(
+              children: [
+                for (final (i, material) in materialsAsync.value!.indexed) ...[
+                  if (i > 0)
+                    const Divider(
+                      height: 1,
+                      color: LecturerColors.outlineVariant,
+                      indent: 56,
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Manual attendance list.'),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.how_to_reg, size: 18),
-                      label: const Text('Manual List'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: LecturerColors.primary,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ),
+                  _ResourceRow(material: material),
                 ],
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
       ],
     );
   }
 }
 
 class _ResourceRow extends StatelessWidget {
-  const _ResourceRow({required this.resource});
+  const _ResourceRow({required this.material});
 
-  final CourseResource resource;
+  final ApiMaterial material;
 
-  IconData get _icon => switch (resource.type) {
-    'pdf' => Icons.picture_as_pdf_outlined,
-    'link' => Icons.link,
-    _ => Icons.folder_outlined,
+  IconData get _icon => switch (material.type) {
+    'pptx' => Icons.slideshow_outlined,
+    'notes' => Icons.description_outlined,
+    _ => Icons.picture_as_pdf_outlined,
   };
 
-  Color get _iconColor => switch (resource.type) {
-    'pdf' => LecturerColors.error,
-    'link' => LecturerColors.onSecondaryContainer,
-    _ => LecturerColors.academicGold,
+  Color get _iconColor => switch (material.type) {
+    'pptx' => LecturerColors.onSecondaryContainer,
+    'notes' => LecturerColors.academicGold,
+    _ => LecturerColors.error,
+  };
+
+  String get _typeLabel => switch (material.type) {
+    'pptx' => 'Slides',
+    'notes' => 'Notes',
+    _ => 'PDF',
   };
 
   @override
   Widget build(BuildContext context) {
+    final meta = [
+      _typeLabel,
+      if (material.sizeLabel.isNotEmpty) material.sizeLabel,
+      'v${material.version}',
+    ].join(' \u2022 ');
+
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       leading: Container(
@@ -361,7 +443,7 @@ class _ResourceRow extends StatelessWidget {
         child: Icon(_icon, size: 18, color: _iconColor),
       ),
       title: Text(
-        resource.title,
+        material.title,
         style: const TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w600,
@@ -369,7 +451,7 @@ class _ResourceRow extends StatelessWidget {
         ),
       ),
       subtitle: Text(
-        resource.subtitle,
+        meta,
         style: const TextStyle(
           fontSize: 12,
           color: LecturerColors.onSurfaceVariant,
@@ -382,17 +464,24 @@ class _ResourceRow extends StatelessWidget {
       ),
       onTap: () {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Opening ${resource.title}\u2026')),
+          SnackBar(content: Text('Opening ${material.title}\u2026')),
         );
       },
     );
   }
 }
 
+/// Attendance tab — static demo until the attendance module lands.
 class _AttendanceTab extends StatelessWidget {
-  const _AttendanceTab({required this.course});
+  const _AttendanceTab();
 
-  final LecturerCourse course;
+  static const _sessions = [
+    (date: 'Oct 24', attended: 94),
+    (date: 'Oct 17', attended: 89),
+    (date: 'Oct 10', attended: 92),
+    (date: 'Oct 3', attended: 87),
+    (date: 'Sep 26', attended: 91),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -412,19 +501,19 @@ class _AttendanceTab extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              Row(
+              const Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '${course.avgAttendance?.round() ?? 0}%',
-                    style: const TextStyle(
+                    '91%',
+                    style: TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.w700,
                       color: LecturerColors.primary,
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  const Padding(
+                  SizedBox(width: 10),
+                  Padding(
                     padding: EdgeInsets.only(bottom: 4),
                     child: LecturerDeltaChip(label: '+4.2%'),
                   ),
@@ -442,7 +531,7 @@ class _AttendanceTab extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  for (final (i, s) in course.sessions.indexed)
+                  for (final (i, s) in _sessions.indexed)
                     Expanded(
                       child: Column(
                         children: [
@@ -481,13 +570,13 @@ class _AttendanceTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
-        LecturerSectionHeader(title: 'Recent Activity'),
+        const LecturerSectionHeader(title: 'Recent Activity'),
         const SizedBox(height: 10),
         SageCard(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Column(
             children: [
-              for (final s in course.sessions)
+              for (final s in _sessions)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: Container(
@@ -527,24 +616,79 @@ class _AttendanceTab extends StatelessWidget {
   }
 }
 
-class _AnnouncementsTab extends StatelessWidget {
-  const _AnnouncementsTab({required this.course});
+class _AnnouncementsTab extends ConsumerStatefulWidget {
+  const _AnnouncementsTab({required this.courseId});
 
-  final LecturerCourse course;
+  final String courseId;
+
+  @override
+  ConsumerState<_AnnouncementsTab> createState() => _AnnouncementsTabState();
+}
+
+class _AnnouncementsTabState extends ConsumerState<_AnnouncementsTab> {
+  bool _posting = false;
+
+  Future<void> _post() async {
+    final result = await showDialog<({String title, String body})>(
+      context: context,
+      builder: (context) => const _AnnouncementComposer(),
+    );
+    if (result == null) return;
+
+    setState(() => _posting = true);
+    try {
+      await ref.read(apiAnnouncementRepositoryProvider).create(
+        title: result.title,
+        body: result.body,
+        courseId: widget.courseId,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Announcement posted.')),
+        );
+      }
+      ref.invalidate(lecturerAnnouncementsForCourseProvider(widget.courseId));
+    } on SageException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _posting = false);
+    }
+  }
+
+  Future<void> _delete(ApiAnnouncement announcement) async {
+    try {
+      await ref.read(apiAnnouncementRepositoryProvider).delete(announcement.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Announcement deleted.')),
+        );
+      }
+      ref.invalidate(lecturerAnnouncementsForCourseProvider(widget.courseId));
+    } on SageException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final announcementsAsync =
+        ref.watch(lecturerAnnouncementsForCourseProvider(widget.courseId));
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
       children: [
         FilledButton.icon(
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Compose a new announcement.')),
-            );
-          },
+          onPressed: _posting ? null : _post,
           icon: const Icon(Icons.add_comment, size: 18),
-          label: const Text('Post New Announcement'),
+          label: Text(_posting ? 'Posting\u2026' : 'Post New Announcement'),
           style: FilledButton.styleFrom(
             backgroundColor: LecturerColors.primary,
             padding: const EdgeInsets.symmetric(vertical: 12),
@@ -554,15 +698,39 @@ class _AnnouncementsTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-        if (course.announcements.isEmpty)
+        if (announcementsAsync.isLoading)
+          const Column(
+            children: [
+              LecturerSkeletonBlock(height: 120, radius: 14),
+              SizedBox(height: 12),
+              LecturerSkeletonBlock(height: 120, radius: 14),
+            ],
+          )
+        else if (announcementsAsync.hasError)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                'Could not load announcements.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: LecturerColors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          )
+        else if (announcementsAsync.value!.isEmpty)
           const LecturerEmptyState(
             icon: Icons.campaign_outlined,
             title: 'No announcements yet',
             description: 'Post the first announcement for this course.',
           )
         else
-          for (final a in course.announcements) ...[
-            _AnnouncementCard(announcement: a),
+          for (final a in announcementsAsync.value!) ...[
+            _AnnouncementCard(
+              announcement: a,
+              onDelete: () => _delete(a),
+            ),
             const SizedBox(height: 12),
           ],
       ],
@@ -570,13 +738,82 @@ class _AnnouncementsTab extends StatelessWidget {
   }
 }
 
-class _AnnouncementCard extends StatelessWidget {
-  const _AnnouncementCard({required this.announcement});
+class _AnnouncementComposer extends StatefulWidget {
+  const _AnnouncementComposer();
 
-  final CourseAnnouncement announcement;
+  @override
+  State<_AnnouncementComposer> createState() => _AnnouncementComposerState();
+}
+
+class _AnnouncementComposerState extends State<_AnnouncementComposer> {
+  final _title = TextEditingController();
+  final _body = TextEditingController();
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _body.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New announcement'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _title,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Title'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _body,
+            maxLines: 4,
+            decoration: const InputDecoration(labelText: 'Message'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final title = _title.text.trim();
+            final body = _body.text.trim();
+            if (title.isEmpty || body.isEmpty) return;
+            Navigator.of(context).pop((title: title, body: body));
+          },
+          child: const Text('Post'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AnnouncementCard extends StatelessWidget {
+  const _AnnouncementCard({required this.announcement, required this.onDelete});
+
+  final ApiAnnouncement announcement;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final author = announcement.postedByName ?? announcement.postedBy;
+    final initials = author.trim().isEmpty
+        ? '?'
+        : author
+            .trim()
+            .split(RegExp(r'\s+'))
+            .map((p) => p.isEmpty ? '' : p[0])
+            .take(2)
+            .join()
+            .toUpperCase();
+
     return SageCard(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -588,7 +825,7 @@ class _AnnouncementCard extends StatelessWidget {
                 radius: 18,
                 backgroundColor: LecturerColors.primaryContainer,
                 child: Text(
-                  announcement.initials,
+                  initials,
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -602,7 +839,7 @@ class _AnnouncementCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      announcement.author,
+                      author,
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
@@ -610,7 +847,7 @@ class _AnnouncementCard extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      announcement.time,
+                      announcement.timeLabel,
                       style: const TextStyle(
                         fontSize: 11,
                         color: LecturerColors.onSurfaceVariant,
@@ -618,6 +855,15 @@ class _AnnouncementCard extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+              IconButton(
+                onPressed: onDelete,
+                icon: const Icon(
+                  Icons.delete_outline,
+                  size: 20,
+                  color: LecturerColors.error,
+                ),
+                tooltip: 'Delete announcement',
               ),
             ],
           ),
@@ -638,38 +884,6 @@ class _AnnouncementCard extends StatelessWidget {
               height: 1.4,
               color: LecturerColors.onSurfaceVariant,
             ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const Icon(
-                Icons.visibility_outlined,
-                size: 15,
-                color: LecturerColors.outline,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                '${announcement.views} Views',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: LecturerColors.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(width: 14),
-              const Icon(
-                Icons.chat_bubble_outline,
-                size: 15,
-                color: LecturerColors.outline,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                '${announcement.comments} Comments',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: LecturerColors.onSurfaceVariant,
-                ),
-              ),
-            ],
           ),
         ],
       ),

@@ -90,6 +90,112 @@ class ApiStudentPerformance {
   }
 }
 
+/// Lecturer-facing course performance from `GET /performance/courses/:id`.
+class ApiCoursePerformance {
+  const ApiCoursePerformance({
+    required this.course,
+    required this.averages,
+    required this.students,
+  });
+
+  final ApiCoursePerformanceCourse course;
+  final ApiCoursePerformanceAverages averages;
+  final List<ApiCoursePerformanceStudent> students;
+
+  factory ApiCoursePerformance.fromJson(Map<String, dynamic> json) {
+    return ApiCoursePerformance(
+      course: ApiCoursePerformanceCourse.fromJson(
+        json['course'] as Map<String, dynamic>? ?? const {},
+      ),
+      averages: ApiCoursePerformanceAverages.fromJson(
+        json['averages'] as Map<String, dynamic>? ?? const {},
+      ),
+      students: (json['students'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(ApiCoursePerformanceStudent.fromJson)
+          .toList(),
+    );
+  }
+}
+
+class ApiCoursePerformanceCourse {
+  const ApiCoursePerformanceCourse({
+    required this.id,
+    required this.code,
+    required this.title,
+  });
+
+  final String id;
+  final String code;
+  final String title;
+
+  factory ApiCoursePerformanceCourse.fromJson(Map<String, dynamic> json) {
+    return ApiCoursePerformanceCourse(
+      id: json['id'] as String? ?? '',
+      code: json['code'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+    );
+  }
+}
+
+class ApiCoursePerformanceAverages {
+  const ApiCoursePerformanceAverages({
+    this.avgAssignmentPct,
+    this.avgQuizPct,
+    this.missedSubmissionRate = 0,
+  });
+
+  final double? avgAssignmentPct;
+  final double? avgQuizPct;
+  final double missedSubmissionRate;
+
+  factory ApiCoursePerformanceAverages.fromJson(Map<String, dynamic> json) {
+    return ApiCoursePerformanceAverages(
+      avgAssignmentPct: (json['avgAssignmentPct'] as num?)?.toDouble(),
+      avgQuizPct: (json['avgQuizPct'] as num?)?.toDouble(),
+      missedSubmissionRate:
+          (json['missedSubmissionRate'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
+class ApiCoursePerformanceStudent {
+  const ApiCoursePerformanceStudent({
+    required this.studentId,
+    required this.name,
+    required this.email,
+    this.gpa,
+    this.avgAssignmentPct,
+    this.avgQuizPct,
+    this.riskScore = 0,
+    this.riskLevel = 'low',
+  });
+
+  final String studentId;
+  final String name;
+  final String email;
+  final double? gpa;
+  final double? avgAssignmentPct;
+  final double? avgQuizPct;
+  final double riskScore;
+
+  /// `low`, `medium`, or `high`.
+  final String riskLevel;
+
+  factory ApiCoursePerformanceStudent.fromJson(Map<String, dynamic> json) {
+    return ApiCoursePerformanceStudent(
+      studentId: json['studentId'] as String,
+      name: json['name'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+      gpa: (json['gpa'] as num?)?.toDouble(),
+      avgAssignmentPct: (json['avgAssignmentPct'] as num?)?.toDouble(),
+      avgQuizPct: (json['avgQuizPct'] as num?)?.toDouble(),
+      riskScore: (json['riskScore'] as num?)?.toDouble() ?? 0,
+      riskLevel: json['riskLevel'] as String? ?? 'low',
+    );
+  }
+}
+
 /// At-risk breakdown from `GET /performance/me/risk`.
 class ApiRiskDetail {
   const ApiRiskDetail({

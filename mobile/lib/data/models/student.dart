@@ -1,83 +1,11 @@
-/// Student domain models. Fields mirror the camelCase JSON contracts in
-/// `docs/api-reference.md` so the mock → API swap (Phase 6) is mechanical.
+/// Student display models: lightweight UI wrappers over the API rows from
+/// `docs/api-wiring-plan.md` Appendix A. The heavy domain models
+/// (`StudentCourse`, `CourseModule`, `AppNotification`, …) were removed with
+/// the mock layer.
 library;
 
-/// A course the student is enrolled in.
-class StudentCourse {
-  const StudentCourse({
-    required this.id,
-    required this.code,
-    required this.name,
-    required this.instructor,
-    required this.progress,
-    this.description,
-    this.grade,
-    this.attendance = 0,
-    this.assignmentsProgress = 0,
-    this.modules = const [],
-    this.feed = const [],
-    this.assignments = const [],
-  });
-
-  final String id;
-  final String code;
-  final String name;
-  final String instructor;
-
-  /// Syllabus completion 0.0–1.0.
-  final double progress;
-  final String? description;
-  final String? grade;
-  final double attendance;
-  final double assignmentsProgress;
-  final List<CourseModule> modules;
-  final List<CourseFeedItem> feed;
-  final List<Assignment> assignments;
-}
-
-/// A syllabus module inside a course (accordion row on course detail).
-class CourseModule {
-  const CourseModule({
-    required this.title,
-    required this.number,
-    this.locked = false,
-    this.unlockText,
-    this.items = const [],
-  });
-
-  final String title;
-  final String number;
-  final bool locked;
-  final String? unlockText;
-  final List<CourseMaterial> items;
-}
-
-/// A single material item inside a module.
-class CourseMaterial {
-  const CourseMaterial({required this.title, required this.type});
-
-  final String title;
-
-  /// `description`, `play_circle` (video), `code`, …
-  final String type;
-}
-
-/// A post on the course feed.
-class CourseFeedItem {
-  const CourseFeedItem({
-    required this.title,
-    required this.time,
-    required this.body,
-    this.accent = 'primary',
-  });
-
-  final String title;
-  final String time;
-  final String body;
-
-  /// `primary` or `secondary`.
-  final String accent;
-}
+import 'api/assignment.dart';
+import 'api/quiz.dart';
 
 /// Assignment status → drives the badge + icon + urgency color.
 enum AssignmentStatus { overdue, dueSoon, pending, submitted, graded }
@@ -106,6 +34,39 @@ class Assignment {
 
   /// e.g. "Completed (94%)".
   final String? completedLabel;
+
+  /// Maps an API assignment row into the display model. `courseCode` is the
+  /// owning course's code (the API rows only carry `courseId`).
+  factory Assignment.fromApi(ApiAssignment api, {required String courseCode}) {
+    final now = DateTime.now();
+    final mine = api.mySubmission;
+    final status = switch ((mine, now.isAfter(api.deadlineAt))) {
+      (final m?, _) when m.graded => AssignmentStatus.graded,
+      (final _, _) when mine != null => AssignmentStatus.submitted,
+      (null, true) => AssignmentStatus.overdue,
+      (null, false) when api.deadlineAt.difference(now).inHours <= 24 =>
+        AssignmentStatus.dueSoon,
+      _ => AssignmentStatus.pending,
+    };
+    return Assignment(
+      id: api.id,
+      title: api.title,
+      description: api.instructions ?? '',
+      courseCode: courseCode,
+      points: api.maxScore,
+      status: status,
+      dueLabel: status == AssignmentStatus.graded ||
+              status == AssignmentStatus.submitted
+          ? null
+          : api.dueLabel,
+      completedLabel: switch (mine) {
+        final m? when m.graded =>
+          'Completed · ${m.score ?? 0}%',
+        final _? => 'Submitted · Pending grade',
+        null => null,
+      },
+    );
+  }
 }
 
 /// Quiz availability → drives badge + button.
@@ -139,42 +100,43 @@ class Quiz {
 
   /// Completed score 0–100.
   final int? score;
-}
 
-/// A quiz question with options (A..D).
-class QuizQuestion {
-  const QuizQuestion({
-    required this.text,
-    required this.options,
-    required this.answerIndex,
-    this.figureCaption,
-  });
-
-  final String text;
-  final List<String> options;
-  final int answerIndex;
-  final String? figureCaption;
-}
-
-/// In-app notification.
-class AppNotification {
-  const AppNotification({
-    required this.id,
-    required this.title,
-    required this.time,
-    required this.body,
-    required this.category,
-    required this.unread,
-    this.actionLabel,
-  });
-
-  final String id;
-  final String title;
-  final String time;
-  final String body;
-
-  /// `grade`, `deadline`, `material`, `announcement`.
-  final String category;
-  final bool unread;
-  final String? actionLabel;
+  /// Maps an API quiz row into the display model. `course` is the owning
+  /// course's code (the API rows only carry `courseId`).
+  factory Quiz.fromApi(ApiQuiz api, {required String course}) {
+    final now = DateTime.now();
+    final from = api.availableFrom;
+    final until = api.availableUntil;
+    final completed = api.myBestScore != null;
+    final status = completed
+        ? QuizStatus.completed
+        : from != null && now.isBefore(from)
+            ? QuizStatus.upcoming
+            : until != null && now.isAfter(until)
+                ? QuizStatus.locked
+                : QuizStatus.active;
+    return Quiz(
+      id: api.id,
+      course: course,
+      title: api.title,
+      durationMins: api.durationMins,
+      questionCount: api.questionCount,
+      status: status,
+      badge: completed
+          ? 'Scored: ${api.myBestScore}%'
+          : switch (status) {
+              QuizStatus.upcoming => 'Upcoming',
+              QuizStatus.locked => 'Closed',
+              _ => 'Available now',
+            },
+      footnote:
+          '${api.questionCount} questions \u00b7 ${api.durationMins} min',
+      buttonLabel: completed
+          ? 'Review Answers'
+          : status == QuizStatus.active
+              ? 'Start Quiz'
+              : 'Open',
+      score: api.myBestScore,
+    );
+  }
 }

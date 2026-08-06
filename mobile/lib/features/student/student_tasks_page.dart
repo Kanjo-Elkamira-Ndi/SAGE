@@ -14,6 +14,8 @@ import 'student_widgets.dart';
 
 /// Tasks — assignments list (with course, due, attachment, submit) followed by
 /// the quiz attempts section (Stitch student assignments + quizzes screens).
+/// Wired to the API (`api-wiring-plan.md` §A.2): `GET /courses/:id/assignments`
+/// and `GET /courses/:id/quizzes` fan-out across the enrolled courses.
 class StudentTasksPage extends ConsumerStatefulWidget {
   const StudentTasksPage({super.key});
 
@@ -26,9 +28,30 @@ class _StudentTasksPageState extends ConsumerState<StudentTasksPage> {
 
   @override
   Widget build(BuildContext context) {
-    final controller = ref.watch(studentControllerProvider.notifier);
-    final assignments = controller.assignments;
-    final quizzes = controller.quizzes;
+    final coursesAsync = ref.watch(apiCoursesProvider);
+    final assignmentsAsync = ref.watch(apiAllAssignmentsProvider);
+    final quizzesAsync = ref.watch(apiAllQuizzesProvider);
+    final courses = coursesAsync.value?.items ?? const [];
+
+    final assignments = (assignmentsAsync.value ?? const [])
+        .map(
+          (a) => Assignment.fromApi(
+            a,
+            courseCode: courseCodeOf(courses, a.courseId),
+          ),
+        )
+        .toList();
+    final quizzes = (quizzesAsync.value ?? const [])
+        .map(
+          (q) => Quiz.fromApi(
+            q,
+            course: courseCodeOf(courses, q.courseId),
+          ),
+        )
+        .toList();
+
+    final loading =
+        coursesAsync.isLoading || assignmentsAsync.isLoading || quizzesAsync.isLoading;
 
     final visible = assignments.where((a) {
       return switch (_filter) {
@@ -81,24 +104,54 @@ class _StudentTasksPageState extends ConsumerState<StudentTasksPage> {
           ),
           const SizedBox(height: 16),
 
-          for (final assignment in visible) ...[
-            _AssignmentCard(assignment: assignment),
-            const SizedBox(height: 12),
+          if (assignmentsAsync.hasError || quizzesAsync.hasError)
+            StudentEmptyState(
+              icon: Icons.cloud_off_outlined,
+              title: 'Could not load tasks',
+              description: 'Check your connection and try again.',
+              actionLabel: 'Retry',
+              onAction: () {
+                ref.invalidate(apiAllAssignmentsProvider);
+                ref.invalidate(apiAllQuizzesProvider);
+              },
+            )
+          else if (loading)
+            for (var i = 0; i < 3; i++) ...[
+              const StudentSkeletonBlock(height: 120),
+              const SizedBox(height: 12),
+            ]
+          else ...[
+            for (final assignment in visible) ...[
+              _AssignmentCard(assignment: assignment),
+              const SizedBox(height: 12),
+            ],
+            if (visible.isEmpty)
+              const StudentEmptyState(
+                icon: Icons.task_alt,
+                title: 'Nothing here',
+                description: 'No tasks match this filter.',
+              ),
           ],
-          if (visible.isEmpty)
-            const StudentEmptyState(
-              icon: Icons.task_alt,
-              title: 'Nothing here',
-              description: 'No tasks match this filter.',
-            ),
 
           const SizedBox(height: 8),
           const StudentSectionHeader(title: 'Quizzes'),
           const SizedBox(height: 12),
-          for (final quiz in quizzes) ...[
-            _QuizCard(quiz: quiz),
-            const SizedBox(height: 12),
-          ],
+          if (quizzesAsync.hasError)
+            const StudentEmptyState(
+              icon: Icons.quiz_outlined,
+              title: 'Could not load quizzes',
+            )
+          else if (quizzes.isEmpty && !quizzesAsync.isLoading)
+            const StudentEmptyState(
+              icon: Icons.quiz_outlined,
+              title: 'No quizzes yet',
+              description: 'Quizzes will show up here when published.',
+            )
+          else
+            for (final quiz in quizzes) ...[
+              _QuizCard(quiz: quiz),
+              const SizedBox(height: 12),
+            ],
         ],
       ),
     );
@@ -219,17 +272,23 @@ class _AssignmentCard extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(
-                  Icons.attach_file,
+                  Icons.description_outlined,
                   size: 15,
                   color: StudentColors.onSurfaceVariant,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  'assignment_brief.pdf',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: StudentColors.onSurfaceVariant,
+                Flexible(
+                  child: Text(
+                    assignment.description.isEmpty
+                        ? 'No instructions attached'
+                        : assignment.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: StudentColors.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],

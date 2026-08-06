@@ -5,9 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile/app/app.dart';
 import 'package:mobile/app/theme/sage_colors.dart';
 import 'package:mobile/core/pagination.dart';
+import 'package:mobile/data/models/api/announcement.dart';
+import 'package:mobile/data/models/api/assignment.dart';
 import 'package:mobile/data/models/api/course.dart';
+import 'package:mobile/data/models/api/exam.dart';
+import 'package:mobile/data/models/api/material.dart';
 import 'package:mobile/data/models/api/notification.dart';
 import 'package:mobile/data/models/api/performance.dart';
+import 'package:mobile/data/models/api/quiz.dart';
 import 'package:mobile/data/models/user.dart';
 import 'package:mobile/data/repositories/mock/mock_auth_repository.dart';
 import 'package:mobile/features/auth/auth_controller.dart';
@@ -36,6 +41,63 @@ final _apiNotification = ApiNotification(
   createdAt: DateTime.now().subtract(const Duration(hours: 1)),
 );
 
+final _apiMaterial = ApiMaterial(
+  id: 'm1',
+  courseId: 'cs402',
+  uploadedBy: 'u-lecturer',
+  title: 'Module 2 Notes',
+  type: 'notes',
+  storageKey: 'materials/module2',
+  version: 1,
+  isCurrent: true,
+  createdAt: DateTime.now(),
+);
+
+final _apiAssignment = ApiAssignment(
+  id: 'a1',
+  courseId: 'cs402',
+  createdBy: 'u-lecturer',
+  title: 'UX Evaluation',
+  instructions: 'Heuristic review of the dashboard flows.',
+  maxScore: 100,
+  deadlineAt: DateTime.now().add(const Duration(days: 3)),
+  allowLateSubmission: true,
+  createdAt: DateTime.now(),
+);
+
+final _apiQuiz = ApiQuiz(
+  id: 'q1',
+  courseId: 'cs402',
+  createdBy: 'u-lecturer',
+  title: 'Quiz 1: Algorithm Fundamentals',
+  aiGenerated: false,
+  questionCount: 3,
+  timeLimitMinutes: 4,
+  createdAt: DateTime.now(),
+);
+
+final _apiExam = ApiExam(
+  id: 'e1',
+  courseId: 'cs402',
+  createdBy: 'u-lecturer',
+  title: 'Midterm Exam',
+  scheduledAt: DateTime.now().add(const Duration(days: 30)),
+  durationMinutes: 90,
+  venue: 'Block A',
+  createdAt: DateTime.now(),
+);
+
+final _apiAnnouncement = ApiAnnouncement(
+  id: 'an1',
+  courseId: 'cs402',
+  courseTitle: 'Advanced Algorithms & Data Structures',
+  title: 'Welcome to the course',
+  body: 'Read module 1 before Friday.',
+  postedBy: 'u-lecturer',
+  postedByName: 'Dr. Elizabeth Thorne',
+  createdAt: DateTime.now().subtract(const Duration(hours: 3)),
+);
+
 /// Pumps the app with the offline overrides (no platform plugins, no network).
 Future<void> pumpApp(WidgetTester tester) async {
   await tester.pumpWidget(
@@ -57,6 +119,21 @@ Future<void> pumpApp(WidgetTester tester) async {
               byCourse: const [],
             ),
           ),
+        ),
+        apiAnnouncementsProvider.overrideWith(
+          (ref) async => Page(items: [_apiAnnouncement], total: 1),
+        ),
+        apiMaterialsForCourseProvider.overrideWith(
+          (ref, courseId) async => [_apiMaterial],
+        ),
+        apiAssignmentsForCourseProvider.overrideWith(
+          (ref, courseId) async => [_apiAssignment],
+        ),
+        apiQuizzesForCourseProvider.overrideWith(
+          (ref, courseId) async => [_apiQuiz],
+        ),
+        apiExamsForCourseProvider.overrideWith(
+          (ref, courseId) async => [_apiExam],
         ),
       ],
       child: const SageApp(),
@@ -276,7 +353,8 @@ void main() {
     await tester.tap(find.text('Advanced Algorithms & Data Structures'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Syllabus'), findsOneWidget);
+    expect(find.text('Materials'), findsOneWidget);
+    expect(find.text('Module 2 Notes'), findsOneWidget);
 
     await tester.dragUntilVisible(
       find.text('Course Feed'),
@@ -284,6 +362,7 @@ void main() {
       const Offset(0, -300),
     );
     expect(find.text('Course Feed'), findsOneWidget);
+    expect(find.text('Welcome to the course'), findsOneWidget);
   });
 
   testWidgets('student tasks tab lists assignments with upload actions',
@@ -301,7 +380,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('UX Evaluation'), findsOneWidget);
-    expect(find.text('assignment_brief.pdf'), findsWidgets);
+    expect(find.text('Heuristic review of the dashboard flows.'), findsOneWidget);
 
     await tester.dragUntilVisible(
       find.text('Quizzes'),
@@ -309,5 +388,6 @@ void main() {
       const Offset(0, -300),
     );
     expect(find.text('Quizzes'), findsOneWidget);
+    expect(find.text('Quiz 1: Algorithm Fundamentals'), findsOneWidget);
   });
 }

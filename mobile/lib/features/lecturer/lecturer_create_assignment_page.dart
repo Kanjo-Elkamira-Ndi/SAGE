@@ -1,37 +1,37 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/sage_exception.dart';
+import '../../data/models/api/course.dart';
 import 'lecturer_colors.dart';
+import 'lecturer_controller.dart';
 import 'lecturer_scaffold.dart';
 
-/// Create-assignment wizard — three steps (Info, Grading, Files) matching the
-/// Stitch reference. Draft publish is a mock action for now.
-class LecturerCreateAssignmentPage extends StatefulWidget {
+/// Create-assignment wizard — three steps (Info, Grading, Files). Publishing
+/// POSTs to `/assignments` via `ApiAssignmentRepository.create`.
+class LecturerCreateAssignmentPage extends ConsumerStatefulWidget {
   const LecturerCreateAssignmentPage({super.key});
 
   @override
-  State<LecturerCreateAssignmentPage> createState() =>
+  ConsumerState<LecturerCreateAssignmentPage> createState() =>
       _LecturerCreateAssignmentPageState();
 }
 
 class _LecturerCreateAssignmentPageState
-    extends State<LecturerCreateAssignmentPage> {
+    extends ConsumerState<LecturerCreateAssignmentPage> {
   int _step = 0;
+  bool _publishing = false;
 
   final _title = TextEditingController();
   final _description = TextEditingController();
-  String _course = 'CS-402 \u00b7 Advanced Algorithms';
+  String? _courseId;
   final _dueDate = TextEditingController();
   final _dueTime = TextEditingController();
+  DateTime? _deadlineDate;
+  TimeOfDay? _deadlineTime;
   final _points = TextEditingController();
   final _weight = TextEditingController();
-
-  static const _courses = [
-    'CS-402 \u00b7 Advanced Algorithms',
-    'CS-302 \u00b7 Algorithm Design',
-    'DS-101 \u00b7 Data Science',
-    'AI-405 \u00b7 Neural Architectures',
-  ];
 
   @override
   void dispose() {
@@ -48,10 +48,7 @@ class _LecturerCreateAssignmentPageState
     if (_step < 2) {
       setState(() => _step++);
     } else {
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Assignment published.')));
+      _publish();
     }
   }
 
@@ -63,8 +60,96 @@ class _LecturerCreateAssignmentPageState
     }
   }
 
+  String? _validate() {
+    if (_title.text.trim().isEmpty) return 'Enter an assignment title.';
+    if (_courseId == null) return 'Select a course.';
+    if (_deadlineDate == null || _deadlineTime == null) {
+      return 'Set a submission deadline.';
+    }
+    return null;
+  }
+
+  Future<void> _publish() async {
+    final error = _validate();
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+
+    final deadline = DateTime(
+      _deadlineDate!.year,
+      _deadlineDate!.month,
+      _deadlineDate!.day,
+      _deadlineTime!.hour,
+      _deadlineTime!.minute,
+    );
+
+    setState(() => _publishing = true);
+    try {
+      await ref
+          .read(apiAssignmentRepositoryProvider)
+          .create(
+            courseId: _courseId!,
+            title: _title.text.trim(),
+            instructions: _description.text.trim().isEmpty
+                ? null
+                : _description.text.trim(),
+            maxScore: int.tryParse(_points.text.trim()) ?? 100,
+            deadlineAt: deadline,
+          );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Assignment published.')),
+      );
+      ref.invalidate(lecturerAllAssignmentsProvider);
+      ref.invalidate(lecturerAssignmentsForCourseProvider(_courseId!));
+      ref.invalidate(lecturerCourseProgressProvider(_courseId!));
+    } on SageException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _publishing = false);
+    }
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (picked != null && mounted) {
+      setState(() => _deadlineDate = picked);
+      _dueDate.text = _fmtDate(picked);
+    }
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (picked != null && mounted) {
+      setState(() => _deadlineTime = picked);
+      _dueTime.text = picked.format(context);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final coursesAsync = ref.watch(lecturerApiCoursesProvider);
+    final courses = coursesAsync.value?.items ?? const <ApiCourse>[];
+    final selected = courses.where((c) => c.id == _courseId);
+    final selectedLabel = selected.isNotEmpty
+        ? '${selected.first.code} \u00b7 ${selected.first.title}'
+        : null;
+
     return LecturerPageScaffold(
       title: 'New Assignment',
       child: Column(
@@ -88,15 +173,19 @@ class _LecturerCreateAssignmentPageState
               0 => _InfoStep(
                 title: _title,
                 description: _description,
-                course: _course,
-                courses: _courses,
-                onCourseChanged: (v) => setState(() => _course = v),
+                courseLabel: selectedLabel,
+                courses: courses,
+                courseId: _courseId,
+                onCourseChanged: (id) => setState(() => _courseId = id),
+                loading: coursesAsync.isLoading,
               ),
               1 => _GradingStep(
                 dueDate: _dueDate,
                 dueTime: _dueTime,
                 points: _points,
                 weight: _weight,
+                onPickDate: _pickDate,
+                onPickTime: _pickTime,
               ),
               _ => const _FilesStep(),
             },
@@ -114,7 +203,7 @@ class _LecturerCreateAssignmentPageState
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: _back,
+                    onPressed: _publishing ? null : _back,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: LecturerColors.primary,
                       side: const BorderSide(color: LecturerColors.primary),
@@ -133,13 +222,17 @@ class _LecturerCreateAssignmentPageState
                 Expanded(
                   flex: 2,
                   child: FilledButton.icon(
-                    onPressed: _next,
+                    onPressed: _publishing ? null : _next,
                     icon: Icon(
                       _step == 2 ? Icons.send : Icons.arrow_forward,
                       size: 18,
                     ),
                     label: Text(
-                      _step == 2 ? 'Publish Assignment' : 'Next Step',
+                      _publishing
+                          ? 'Publishing\u2026'
+                          : _step == 2
+                              ? 'Publish Assignment'
+                              : 'Next Step',
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     style: FilledButton.styleFrom(
@@ -230,16 +323,20 @@ class _InfoStep extends StatelessWidget {
   const _InfoStep({
     required this.title,
     required this.description,
-    required this.course,
+    required this.courseLabel,
     required this.courses,
+    required this.courseId,
     required this.onCourseChanged,
+    required this.loading,
   });
 
   final TextEditingController title;
   final TextEditingController description;
-  final String course;
-  final List<String> courses;
+  final String? courseLabel;
+  final List<ApiCourse> courses;
+  final String? courseId;
   final ValueChanged<String> onCourseChanged;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -254,15 +351,21 @@ class _InfoStep extends StatelessWidget {
         const SizedBox(height: 16),
         const _FieldLabel('Course Selection'),
         DropdownButtonFormField<String>(
-          initialValue: course,
+          initialValue: courseId,
           items: [
-            for (final c in courses) DropdownMenuItem(value: c, child: Text(c)),
+            for (final c in courses)
+              DropdownMenuItem(
+                value: c.id,
+                child: Text('${c.code} \u00b7 ${c.title}'),
+              ),
           ],
           onChanged: (v) {
             if (v != null) onCourseChanged(v);
           },
           icon: const Icon(Icons.expand_more, color: LecturerColors.primary),
-          decoration: _inputDeco(),
+          decoration: _inputDeco(
+            hint: loading ? 'Loading courses\u2026' : courseLabel,
+          ),
         ),
         const SizedBox(height: 16),
         const _FieldLabel('Description'),
@@ -284,23 +387,27 @@ class _GradingStep extends StatelessWidget {
     required this.dueTime,
     required this.points,
     required this.weight,
+    required this.onPickDate,
+    required this.onPickTime,
   });
 
   final TextEditingController dueDate;
   final TextEditingController dueTime;
   final TextEditingController points;
   final TextEditingController weight;
+  final VoidCallback onPickDate;
+  final VoidCallback onPickTime;
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
       children: [
-        Row(
+        const Row(
           children: [
-            const Icon(Icons.event, size: 18, color: LecturerColors.primary),
-            const SizedBox(width: 8),
-            const Text(
+            Icon(Icons.event, size: 18, color: LecturerColors.primary),
+            SizedBox(width: 8),
+            Text(
               'Submission Window',
               style: TextStyle(
                 fontSize: 15,
@@ -321,7 +428,7 @@ class _GradingStep extends StatelessWidget {
                   TextField(
                     controller: dueDate,
                     readOnly: true,
-                    onTap: () => _pickDate(context),
+                    onTap: onPickDate,
                     decoration: _inputDeco(
                       hint: 'Oct 15, 2024',
                       suffix: Icons.calendar_today_outlined,
@@ -339,7 +446,7 @@ class _GradingStep extends StatelessWidget {
                   TextField(
                     controller: dueTime,
                     readOnly: true,
-                    onTap: () => _pickTime(context),
+                    onTap: onPickTime,
                     decoration: _inputDeco(
                       hint: '11:59 PM',
                       suffix: Icons.schedule,
@@ -397,31 +504,6 @@ class _GradingStep extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-Future<void> _pickDate(BuildContext context) async {
-  final now = DateTime.now();
-  final picked = await showDatePicker(
-    context: context,
-    initialDate: now,
-    firstDate: now,
-    lastDate: now.add(const Duration(days: 365)),
-  );
-  if (picked != null && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Due date set to ${_fmtDate(picked)}.')),
-    );
-  }
-}
-
-Future<void> _pickTime(BuildContext context) async {
-  final now = TimeOfDay.now();
-  final picked = await showTimePicker(context: context, initialTime: now);
-  if (picked != null && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Due time set to ${picked.format(context)}.')),
     );
   }
 }

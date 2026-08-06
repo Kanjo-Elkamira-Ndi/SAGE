@@ -2,14 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../data/models/lecturer.dart';
+import '../../data/models/api/course.dart';
 import '../../shared/widgets/sage_progress_bar.dart';
 import 'lecturer_colors.dart';
 import 'lecturer_controller.dart';
 import 'lecturer_scaffold.dart';
+import 'lecturer_widgets.dart';
 
-/// Lecturer course list — search field plus semester/level filter chips, and
-/// course cards showing enrollment, syllabus progress, and a detail chevron.
+/// Lecturer course list — search field plus semester filter chips, and course
+/// cards showing enrollment, syllabus progress, and a detail chevron.
 class LecturerCoursesPage extends ConsumerStatefulWidget {
   const LecturerCoursesPage({super.key});
 
@@ -23,20 +24,28 @@ class _LecturerCoursesPageState extends ConsumerState<LecturerCoursesPage> {
   String _query = '';
   String _filter = 'All';
 
-  static const _filters = ['All', 'Fall 2024', 'Spring 2025'];
-
   @override
   void dispose() {
     _search.dispose();
     super.dispose();
   }
 
-  List<LecturerCourse> _apply(List<LecturerCourse> courses) {
+  List<String> _semesters(List<ApiCourse> courses) {
+    final seen = <String>{};
+    for (final c in courses) {
+      final semester = c.semester;
+      if (semester != null && semester.trim().isNotEmpty) {
+        seen.add(semester.trim());
+      }
+    }
+    return seen.toList();
+  }
+
+  List<ApiCourse> _apply(List<ApiCourse> courses) {
     var result = courses;
     if (_filter != 'All') {
-      result = result
-          .where((c) => c.semester.contains(_filter.split(' ').first))
-          .toList();
+      result =
+          result.where((c) => c.semester == _filter || c.semester?.contains(_filter) == true).toList();
     }
     if (_query.trim().isNotEmpty) {
       final q = _query.trim().toLowerCase();
@@ -44,7 +53,7 @@ class _LecturerCoursesPageState extends ConsumerState<LecturerCoursesPage> {
           .where(
             (c) =>
                 c.code.toLowerCase().contains(q) ||
-                c.name.toLowerCase().contains(q),
+                c.title.toLowerCase().contains(q),
           )
           .toList();
     }
@@ -53,8 +62,7 @@ class _LecturerCoursesPageState extends ConsumerState<LecturerCoursesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final courses = ref.watch(lecturerControllerProvider.notifier).courses;
-    final visible = _apply(courses);
+    final coursesAsync = ref.watch(lecturerApiCoursesProvider);
 
     return LecturerPageScaffold(
       title: 'My Courses',
@@ -91,53 +99,54 @@ class _LecturerCoursesPageState extends ConsumerState<LecturerCoursesPage> {
               ),
             ),
           ),
-          SizedBox(
-            height: 36,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              itemCount: _filters.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (context, i) {
-                final f = _filters[i];
-                final selected = f == _filter;
-                return ChoiceChip(
-                  label: Text(f),
-                  selected: selected,
-                  onSelected: (_) => setState(() => _filter = f),
-                  showCheckmark: false,
-                  labelStyle: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: selected
-                        ? LecturerColors.primary
-                        : LecturerColors.onSurfaceVariant,
-                  ),
-                  backgroundColor: LecturerColors.surfaceLowest,
-                  selectedColor: LecturerColors.secondaryContainer,
-                  side: BorderSide(
-                    color: selected
-                        ? LecturerColors.primary
-                        : LecturerColors.outlineVariant,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                );
-              },
+          if (coursesAsync.value != null) ...[
+            SizedBox(
+              height: 36,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: _semesters(coursesAsync.value!.items).length + 1,
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemBuilder: (context, i) {
+                  final semesters = _semesters(coursesAsync.value!.items);
+                  final f = i == 0 ? 'All' : semesters[i - 1];
+                  final selected = f == _filter;
+                  return ChoiceChip(
+                    label: Text(f),
+                    selected: selected,
+                    onSelected: (_) => setState(() => _filter = f),
+                    showCheckmark: false,
+                    labelStyle: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: selected
+                          ? LecturerColors.primary
+                          : LecturerColors.onSurfaceVariant,
+                    ),
+                    backgroundColor: LecturerColors.surfaceLowest,
+                    selectedColor: LecturerColors.secondaryContainer,
+                    side: BorderSide(
+                      color: selected
+                          ? LecturerColors.primary
+                          : LecturerColors.outlineVariant,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  );
+                },
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
+          ],
           Expanded(
-            child: visible.isEmpty
-                ? _CoursesEmpty(query: _query)
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-                    itemCount: visible.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 12),
-                    itemBuilder: (context, i) =>
-                        _CourseCard(course: visible[i]),
-                  ),
+            child: coursesAsync.isLoading
+                ? const _CoursesLoading()
+                : coursesAsync.hasError
+                    ? _CoursesError(
+                        onRetry: () => ref.invalidate(lecturerApiCoursesProvider),
+                      )
+                    : _CoursesBody(courses: _apply(coursesAsync.value!.items)),
           ),
         ],
       ),
@@ -145,10 +154,76 @@ class _LecturerCoursesPageState extends ConsumerState<LecturerCoursesPage> {
   }
 }
 
-class _CoursesEmpty extends StatelessWidget {
-  const _CoursesEmpty({required this.query});
+class _CoursesBody extends StatelessWidget {
+  const _CoursesBody({required this.courses});
 
-  final String query;
+  final List<ApiCourse> courses;
+
+  @override
+  Widget build(BuildContext context) {
+    if (courses.isEmpty) return const _CoursesEmpty();
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+      itemCount: courses.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 12),
+      itemBuilder: (context, i) => _CourseCard(course: courses[i]),
+    );
+  }
+}
+
+class _CoursesLoading extends StatelessWidget {
+  const _CoursesLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+      itemCount: 3,
+      separatorBuilder: (_, _) => const SizedBox(height: 12),
+      itemBuilder: (_, _) =>
+          const LecturerSkeletonBlock(height: 132, radius: 14),
+    );
+  }
+}
+
+class _CoursesError extends StatelessWidget {
+  const _CoursesError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.error_outline,
+              size: 34,
+              color: LecturerColors.error,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Could not load your courses',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: LecturerColors.primary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CoursesEmpty extends StatelessWidget {
+  const _CoursesEmpty();
 
   @override
   Widget build(BuildContext context) {
@@ -180,12 +255,10 @@ class _CoursesEmpty extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              query.trim().isEmpty
-                  ? 'No courses match this filter.'
-                  : 'No results for \u201C$query\u201D.',
+            const Text(
+              'No courses match this filter.',
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 color: LecturerColors.onSurfaceVariant,
               ),
@@ -197,15 +270,16 @@ class _CoursesEmpty extends StatelessWidget {
   }
 }
 
-class _CourseCard extends StatelessWidget {
+class _CourseCard extends ConsumerWidget {
   const _CourseCard({required this.course});
 
-  final LecturerCourse course;
+  final ApiCourse course;
 
   @override
-  Widget build(BuildContext context) {
-    final enrolled = '${course.studentsEnrolled} Students Enrolled';
-    final completion = course.syllabusCompletion;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final completion =
+        ref.watch(lecturerCourseProgressProvider(course.id)).value ?? 0;
+    final enrolled = '${course.enrolledCount} Students Enrolled';
 
     return Material(
       color: LecturerColors.surfaceLowest,
@@ -254,7 +328,7 @@ class _CourseCard extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                course.name,
+                course.title,
                 style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
@@ -263,7 +337,9 @@ class _CourseCard extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                '${course.semester} \u2022 Level ${course.level}',
+                course.semester?.isNotEmpty == true
+                    ? '${course.semester} \u2022 ${course.lecturerName}'
+                    : course.lecturerName,
                 style: const TextStyle(
                   fontSize: 12,
                   color: LecturerColors.onSurfaceVariant,

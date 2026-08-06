@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/sage_colors.dart';
+import '../../data/models/api/course.dart';
 import '../../shared/widgets/sage_card.dart';
 import '../../shared/widgets/sage_progress_bar.dart';
 import '../auth/auth_controller.dart';
@@ -26,13 +27,9 @@ class LecturerDashboardPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authControllerProvider).user;
-    final controller = ref.watch(lecturerControllerProvider.notifier);
-    final courses = controller.courses;
-    final assignments = controller.assignments;
-    final pendingGradings = assignments.fold<int>(
-      0,
-      (sum, a) => sum + a.pendingCount,
-    );
+    final coursesAsync = ref.watch(lecturerApiCoursesProvider);
+    final assignmentsAsync = ref.watch(lecturerAllAssignmentsProvider);
+    final pendingAsync = ref.watch(lecturerPendingGradingCountProvider);
 
     final fullName = user?.fullName ?? 'Prof. Rivers';
 
@@ -58,54 +55,73 @@ class LecturerDashboardPage extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 8),
-          Row(
+          const Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.calendar_today_outlined,
                 size: 14,
                 color: LecturerColors.onSurfaceVariant,
               ),
-              const SizedBox(width: 6),
-              const Text(
+              SizedBox(width: 6),
+              Text(
                 'Monday, Oct 23rd',
                 style: TextStyle(
                   fontSize: 12,
                   color: LecturerColors.onSurfaceVariant,
                 ),
               ),
-              const Spacer(),
+              Spacer(),
             ],
           ),
           const SizedBox(height: 20),
 
-          // KPI stats
-          Row(
-            children: [
-              Expanded(
-                child: _DashboardStat(
-                  icon: Icons.groups_outlined,
-                  iconColor: LecturerColors.primary,
-                  value: '1,248',
-                  label: 'Total Students',
-                  delta: '+4%',
+          if (coursesAsync.isLoading || assignmentsAsync.isLoading ||
+              pendingAsync.isLoading)
+            const _DashboardLoading()
+          else if (coursesAsync.hasError || assignmentsAsync.hasError ||
+              pendingAsync.hasError)
+            _DashboardError(
+              onRetry: () {
+                ref.invalidate(lecturerApiCoursesProvider);
+                ref.invalidate(lecturerAllAssignmentsProvider);
+                ref.invalidate(lecturerPendingGradingCountProvider);
+              },
+            )
+          else ...[
+            // KPI stats
+            Row(
+              children: [
+                Expanded(
+                  child: _DashboardStat(
+                    icon: Icons.groups_outlined,
+                    iconColor: LecturerColors.primary,
+                    value: '${coursesAsync.value!.items.fold<int>(
+                      0,
+                      (sum, c) => sum + c.enrolledCount,
+                    )}',
+                    label: 'Total Students',
+                    delta: '+4%',
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _DashboardStat(
-                  icon: Icons.school_outlined,
-                  iconColor: LecturerColors.academicGold,
-                  value: courses.length.toString().padLeft(2, '0'),
-                  label: 'Active Courses',
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _DashboardStat(
+                    icon: Icons.school_outlined,
+                    iconColor: LecturerColors.academicGold,
+                    value: coursesAsync.value!.items.length
+                        .toString()
+                        .padLeft(2, '0'),
+                    label: 'Active Courses',
+                  ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _PendingGradingCard(
-            value: '$pendingGradings Submissions',
-            onViewList: () => context.go('/lecturer/tasks'),
-          ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _PendingGradingCard(
+              value: '${pendingAsync.value ?? 0} Submissions',
+              onViewList: () => context.go('/lecturer/tasks'),
+            ),
+          ],
           const SizedBox(height: 20),
 
           // Up Next
@@ -116,9 +132,9 @@ class LecturerDashboardPage extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                const Row(
                   children: [
-                    const Expanded(
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -141,24 +157,7 @@ class LecturerDashboardPage extends ConsumerWidget {
                         ],
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: LecturerColors.secondaryContainer,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: const Text(
-                        'In 45 mins',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: LecturerColors.onSecondaryContainer,
-                        ),
-                      ),
-                    ),
+                    _In45Pill(),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -226,22 +225,21 @@ class LecturerDashboardPage extends ConsumerWidget {
             },
           ),
           const SizedBox(height: 10),
-          _ActivityRow(
+          const _ActivityRow(
             icon: Icons.assignment_outlined,
             title: 'New Submission',
             time: '12m ago',
-            body:
-                'uploaded \u201CFinal Project Draft\u201D for Cognitive Studies.',
+            body: 'uploaded \u201CFinal Project Draft\u201D for Cognitive Studies.',
             actor: 'Elena Vance',
           ),
-          _ActivityRow(
+          const _ActivityRow(
             icon: Icons.forum_outlined,
             title: 'Forum Post',
             time: '1h ago',
             body: 'New discussion in regarding Chapter 4.',
             actor: 'Applied Ethics',
           ),
-          _ActivityRow(
+          const _ActivityRow(
             icon: Icons.chat_bubble_outline,
             title: 'Direct Message',
             time: '3h ago',
@@ -257,17 +255,109 @@ class LecturerDashboardPage extends ConsumerWidget {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                for (final (i, course) in courses.indexed) ...[
-                  if (i > 0) const SizedBox(height: 14),
-                  _CurriculumRow(
-                    code: course.code,
-                    progress: course.syllabusCompletion,
-                  ),
-                ],
+                if (coursesAsync.isLoading || coursesAsync.hasError)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Text(
+                      'Curriculum progress unavailable.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: LecturerColors.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                else
+                  for (final (i, course) in
+                      coursesAsync.value!.items.indexed) ...[
+                    if (i > 0) const SizedBox(height: 14),
+                    _CurriculumRow(course: course),
+                  ],
               ],
             ),
           ),
           const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _In45Pill extends StatelessWidget {
+  const _In45Pill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: LecturerColors.secondaryContainer,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Text(
+        'In 45 mins',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: LecturerColors.onSecondaryContainer,
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardLoading extends StatelessWidget {
+  const _DashboardLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: LecturerSkeletonBlock(height: 92, radius: 14)),
+            SizedBox(width: 12),
+            Expanded(child: LecturerSkeletonBlock(height: 92, radius: 14)),
+          ],
+        ),
+        SizedBox(height: 12),
+        LecturerSkeletonBlock(height: 64, radius: 14),
+      ],
+    );
+  }
+}
+
+class _DashboardError extends StatelessWidget {
+  const _DashboardError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: LecturerColors.surfaceLowest,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: LecturerColors.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            size: 20,
+            color: LecturerColors.error,
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Could not load your dashboard.',
+              style: TextStyle(
+                fontSize: 13,
+                color: LecturerColors.onSurfaceVariant,
+              ),
+            ),
+          ),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),
     );
@@ -524,14 +614,17 @@ class _ActivityRow extends StatelessWidget {
   }
 }
 
-class _CurriculumRow extends StatelessWidget {
-  const _CurriculumRow({required this.code, required this.progress});
+class _CurriculumRow extends ConsumerWidget {
+  const _CurriculumRow({required this.course});
 
-  final String code;
-  final double progress;
+  final ApiCourse course;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final progressAsync =
+        ref.watch(lecturerCourseProgressProvider(course.id));
+    final progress = progressAsync.value ?? 0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -539,7 +632,7 @@ class _CurriculumRow extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              code,
+              course.code,
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,

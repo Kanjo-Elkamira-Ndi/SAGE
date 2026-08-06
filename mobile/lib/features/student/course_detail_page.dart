@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/sage_colors.dart';
+import '../../data/models/api/announcement.dart';
+import '../../data/models/api/exam.dart';
+import '../../data/models/api/material.dart';
+import '../../data/models/api/performance.dart';
 import '../../data/models/student.dart';
 import '../../shared/widgets/sage_button.dart';
 import '../../shared/widgets/sage_card.dart';
@@ -11,8 +16,10 @@ import 'student_colors.dart';
 import 'student_controller.dart';
 import 'student_widgets.dart';
 
-/// Course detail — syllabus accordion, course feed, assignments, and quiz
-/// attempt (Stitch student course detail screen).
+/// Course detail — progress overview, materials, assignments, quizzes, exams,
+/// and the course feed (Stitch student course detail screen). Wired to the
+/// API (`api-wiring-plan.md` §A.2): `GET /courses`, `GET /courses/:id/
+/// {materials,assignments,quizzes,exams}`, `GET /announcements`.
 class CourseDetailPage extends ConsumerWidget {
   const CourseDetailPage({super.key, required this.courseId});
 
@@ -20,8 +27,31 @@ class CourseDetailPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final course =
-        ref.watch(studentControllerProvider.notifier).courseById(courseId);
+    final courseAsync = ref.watch(apiCourseByIdProvider(courseId));
+    final materialsAsync = ref.watch(apiMaterialsForCourseProvider(courseId));
+    final assignmentsAsync =
+        ref.watch(apiAssignmentsForCourseProvider(courseId));
+    final quizzesAsync = ref.watch(apiQuizzesForCourseProvider(courseId));
+    final examsAsync = ref.watch(apiExamsForCourseProvider(courseId));
+    final performanceAsync = ref.watch(apiPerformanceProvider);
+    final announcementsAsync = ref.watch(apiAnnouncementsProvider);
+
+    final course = courseAsync.value;
+    final code = course?.code ?? '—';
+    ApiCourseMetric? courseMetric;
+    for (final c in performanceAsync.value?.metrics.byCourse ??
+        const <ApiCourseMetric>[]) {
+      if (c.id == courseId) {
+        courseMetric = c;
+        break;
+      }
+    }
+    final coursePct = courseMetric?.coursePct;
+    final submitted = courseMetric?.submittedCount ?? 0;
+    final total = courseMetric?.assignmentCount ?? 0;
+    final feed = (announcementsAsync.value?.items ?? const [])
+        .where((a) => a.courseId == courseId)
+        .toList();
 
     return Scaffold(
       backgroundColor: StudentColors.background,
@@ -30,7 +60,7 @@ class CourseDetailPage extends ConsumerWidget {
         foregroundColor: StudentColors.primary,
         elevation: 0,
         title: Text(
-          course.name,
+          course?.title ?? 'Course',
           style: const TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w700,
@@ -38,245 +68,260 @@ class CourseDetailPage extends ConsumerWidget {
           ),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-        children: [
-          Row(
-            children: [
-              CourseCodeBadge(code: course.code),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  course.name,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: StudentColors.primary,
-                    height: 1.25,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            course.instructor,
-            style: const TextStyle(
-              fontSize: 13,
-              color: StudentColors.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            course.description ?? '',
-            style: const TextStyle(
-              fontSize: 13,
-              color: StudentColors.onSurfaceVariant,
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Progress overview
-          SageCard(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                SageCircularProgress(
-                  value: course.progress,
-                  size: 84,
-                  strokeWidth: 8,
-                  color: StudentColors.primary,
-                  label: '${(course.progress * 100).round()}%',
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _OverviewLine(
-                        label: 'Grade',
-                        value: course.grade ?? '—',
-                        color: StudentColors.primary,
+      body: courseAsync.hasError
+          ? StudentEmptyState(
+              icon: Icons.cloud_off_outlined,
+              title: 'Could not load this course',
+              description: 'Check your connection and try again.',
+              actionLabel: 'Retry',
+              onAction: () {
+                ref.invalidate(apiCourseByIdProvider(courseId));
+                ref.invalidate(apiMaterialsForCourseProvider(courseId));
+                ref.invalidate(apiAssignmentsForCourseProvider(courseId));
+                ref.invalidate(apiQuizzesForCourseProvider(courseId));
+                ref.invalidate(apiExamsForCourseProvider(courseId));
+              },
+            )
+          : courseAsync.isLoading
+              ? ListView(
+                  padding: const EdgeInsets.all(20),
+                  children: const [
+                    StudentSkeletonBlock(height: 60),
+                    SizedBox(height: 12),
+                    StudentSkeletonBlock(height: 120),
+                    SizedBox(height: 12),
+                    StudentSkeletonBlock(height: 120),
+                  ],
+                )
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                  children: [
+                    Row(
+                      children: [
+                        CourseCodeBadge(code: code),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            course!.title,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: StudentColors.primary,
+                              height: 1.25,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      course.lecturerName,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: StudentColors.onSurfaceVariant,
                       ),
-                      const SizedBox(height: 8),
-                      _OverviewLine(
-                        label: 'Attendance',
-                        value: '${(course.attendance * 100).round()}%',
-                        color: StudentColors.success,
-                      ),
-                      const SizedBox(height: 8),
-                      _OverviewLine(
-                        label: 'Assignments',
-                        value: '${(course.assignmentsProgress * 100).round()}%',
-                        color: StudentColors.academicGold,
+                    ),
+                    if (course.description != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        course.description!,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: StudentColors.onSurfaceVariant,
+                          height: 1.5,
+                        ),
                       ),
                     ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
+                    const SizedBox(height: 16),
 
-          // Syllabus
-          const StudentSectionHeader(title: 'Syllabus'),
-          const SizedBox(height: 8),
-          SageCard(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Column(
-              children: [
-                for (final module in course.modules) _ModuleTile(module: module),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Assignments
-          const StudentSectionHeader(title: 'Assignments'),
-          const SizedBox(height: 8),
-          for (final assignment in course.assignments) ...[
-            _CourseAssignmentTile(assignment: assignment),
-            const SizedBox(height: 10),
-          ],
-          if (course.assignments.isEmpty)
-            const StudentEmptyState(
-              icon: Icons.task_alt,
-              title: 'No assignments yet',
-              description: 'New assignments will show up here.',
-            ),
-
-          if (course.assignments.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            // Quiz attempt
-            SageCard(
-              color: StudentColors.secondaryContainer,
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: StudentColors.surfaceLowest,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.quiz_outlined,
-                      color: StudentColors.primary,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Quiz 1: Algorithm Fundamentals',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: StudentColors.onSecondaryContainer,
+                    // Progress overview
+                    SageCard(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          SageCircularProgress(
+                            value: coursePct == null
+                                ? 0
+                                : (coursePct / 100).clamp(0.0, 1.0),
+                            size: 84,
+                            strokeWidth: 8,
+                            color: StudentColors.primary,
+                            label: coursePct != null
+                                ? '${coursePct.round()}%'
+                                : '—',
                           ),
-                        ),
-                        SizedBox(height: 2),
-                        Text(
-                          '3 questions \u00b7 4 min',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: StudentColors.onSecondaryContainer,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SageButton(
-                    variant: SageButtonVariant.accent,
-                    size: SageButtonSize.small,
-                    onPressed: () =>
-                        context.go('/student/quiz/q-cs402-1'),
-                    child: const Text('START'),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          const SizedBox(height: 20),
-
-          // Course feed
-          const StudentSectionHeader(title: 'Course Feed'),
-          const SizedBox(height: 8),
-          for (final item in course.feed) ...[
-            SageCard(
-              padding: const EdgeInsets.all(14),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: item.accent == 'secondary'
-                          ? StudentColors.secondaryContainer
-                          : StudentColors.primaryContainer,
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: Icon(
-                      item.accent == 'secondary'
-                          ? Icons.folder_open_outlined
-                          : Icons.description_outlined,
-                      size: 17,
-                      color: StudentColors.surfaceLowest,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                item.title,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.textPrimary,
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _OverviewLine(
+                                  label: 'Grade',
+                                  value: _gradeFor(coursePct),
+                                  color: StudentColors.primary,
                                 ),
-                              ),
+                                const SizedBox(height: 8),
+                                _OverviewLine(
+                                  label: 'Assignments',
+                                  value: total == 0
+                                      ? '—'
+                                      : '$submitted/$total',
+                                  color: StudentColors.academicGold,
+                                ),
+                                const SizedBox(height: 8),
+                                _OverviewLine(
+                                  label: 'Quizzes',
+                                  value:
+                                      '${quizzesAsync.value?.length ?? 0}',
+                                  color: StudentColors.success,
+                                ),
+                              ],
                             ),
-                            Text(
-                              item.time,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: StudentColors.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Materials
+                    const StudentSectionHeader(title: 'Materials'),
+                    const SizedBox(height: 8),
+                    if (materialsAsync.hasError ||
+                        (materialsAsync.isLoading && materialsAsync.value == null))
+                      const StudentSkeletonBlock(height: 72)
+                    else if (materialsAsync.value!.isEmpty)
+                      const StudentEmptyState(
+                        icon: Icons.folder_open_outlined,
+                        title: 'No materials yet',
+                        description: 'Lecture notes and slides will show here.',
+                      )
+                    else
+                      for (final material in materialsAsync.value!) ...[
+                        _MaterialTile(
+                          material: material,
+                          onDownload: () =>
+                              _openMaterial(context, ref, material),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          item.body,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: StudentColors.onSurfaceVariant,
-                            height: 1.4,
+                        const SizedBox(height: 10),
+                      ],
+                    const SizedBox(height: 20),
+
+                    // Assignments
+                    const StudentSectionHeader(title: 'Assignments'),
+                    const SizedBox(height: 8),
+                    if (assignmentsAsync.hasError ||
+                        (assignmentsAsync.isLoading &&
+                            assignmentsAsync.value == null))
+                      const StudentSkeletonBlock(height: 72)
+                    else if (assignmentsAsync.value!.isEmpty)
+                      const StudentEmptyState(
+                        icon: Icons.task_alt,
+                        title: 'No assignments yet',
+                        description: 'New assignments will show up here.',
+                      )
+                    else
+                      for (final assignment
+                          in assignmentsAsync.value!) ...[
+                        _CourseAssignmentTile(
+                          assignment: Assignment.fromApi(
+                            assignment,
+                            courseCode: code,
                           ),
                         ),
+                        const SizedBox(height: 10),
                       ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-          ],
-        ],
-      ),
+                    const SizedBox(height: 20),
+
+                    // Quizzes
+                    const StudentSectionHeader(title: 'Quizzes'),
+                    const SizedBox(height: 8),
+                    if (quizzesAsync.hasError ||
+                        (quizzesAsync.isLoading && quizzesAsync.value == null))
+                      const StudentSkeletonBlock(height: 72)
+                    else if (quizzesAsync.value!.isEmpty)
+                      const StudentEmptyState(
+                        icon: Icons.quiz_outlined,
+                        title: 'No quizzes yet',
+                        description: 'Quizzes for this course will show here.',
+                      )
+                    else
+                      for (final quiz in quizzesAsync.value!) ...[
+                        _QuizTile(quiz: Quiz.fromApi(quiz, course: code)),
+                        const SizedBox(height: 10),
+                      ],
+                    const SizedBox(height: 20),
+
+                    // Exams
+                    const StudentSectionHeader(title: 'Exams'),
+                    const SizedBox(height: 8),
+                    if (examsAsync.hasError ||
+                        (examsAsync.isLoading && examsAsync.value == null))
+                      const StudentSkeletonBlock(height: 72)
+                    else if (examsAsync.value!.isEmpty)
+                      const StudentEmptyState(
+                        icon: Icons.event_seat_outlined,
+                        title: 'No exams scheduled',
+                        description: 'Exam dates will show up here.',
+                      )
+                    else
+                      for (final exam in examsAsync.value!) ...[
+                        _ExamTile(exam: exam),
+                        const SizedBox(height: 10),
+                      ],
+                    const SizedBox(height: 20),
+
+                    // Course feed (announcements for this course)
+                    const StudentSectionHeader(title: 'Course Feed'),
+                    const SizedBox(height: 8),
+                    if (feed.isEmpty)
+                      const StudentEmptyState(
+                        icon: Icons.campaign_outlined,
+                        title: 'No announcements yet',
+                        description: 'Updates from your lecturer appear here.',
+                      )
+                    else
+                      for (final item in feed) ...[
+                        _FeedTile(item: item),
+                        const SizedBox(height: 10),
+                      ],
+                  ],
+                ),
     );
+  }
+
+  String _gradeFor(double? pct) {
+    if (pct == null) return '—';
+    return switch (pct) {
+      >= 90 => 'A',
+      >= 80 => 'B',
+      >= 70 => 'C',
+      >= 60 => 'D',
+      _ => 'F',
+    };
+  }
+
+  Future<void> _openMaterial(
+    BuildContext context,
+    WidgetRef ref,
+    ApiMaterial material,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final repo = ref.read(apiMaterialRepositoryProvider);
+      final url = await repo.downloadUrl(material.id);
+      await Clipboard.setData(ClipboardData(text: url));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Download link for "${material.title}" copied to clipboard.',
+          ),
+        ),
+      );
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not prepare the download.')),
+      );
+    }
   }
 }
 
@@ -312,71 +357,64 @@ class _OverviewLine extends StatelessWidget {
   }
 }
 
-class _ModuleTile extends StatelessWidget {
-  const _ModuleTile({required this.module});
+class _MaterialTile extends StatelessWidget {
+  const _MaterialTile({required this.material, required this.onDownload});
 
-  final CourseModule module;
+  final ApiMaterial material;
+  final VoidCallback onDownload;
 
   @override
   Widget build(BuildContext context) {
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: const EdgeInsets.only(bottom: 8),
-      leading: Container(
-        width: 36,
-        height: 36,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: module.locked
-              ? StudentColors.surfaceHighest
-              : StudentColors.primaryContainer,
-          borderRadius: BorderRadius.circular(9),
-        ),
-        child: Icon(
-          module.locked ? Icons.lock_outline : Icons.menu_book_outlined,
-          size: 17,
-          color: StudentColors.surfaceLowest,
-        ),
-      ),
-      title: Text(
-        module.title,
-        style: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: AppColors.textPrimary,
-        ),
-      ),
-      subtitle: Text(
-        module.locked
-            ? 'Module ${module.number} \u00b7 ${module.unlockText ?? 'Locked'}'
-            : 'Module ${module.number}',
-        style: const TextStyle(
-          fontSize: 11,
-          color: StudentColors.onSurfaceVariant,
-        ),
-      ),
-      children: [
-        for (final item in module.items)
-          ListTile(
-            dense: true,
-            leading: Icon(
-              item.type == 'play_circle'
-                  ? Icons.play_circle_outline
-                  : item.type == 'code'
-                      ? Icons.code
-                      : Icons.description_outlined,
-              size: 18,
-              color: StudentColors.primary,
+    final (icon, color) = switch (material.type) {
+      'pptx' => (Icons.slideshow_outlined, StudentColors.error),
+      'notes' => (Icons.description_outlined, StudentColors.academicGold),
+      _ => (Icons.picture_as_pdf_outlined, StudentColors.success),
+    };
+    return SageCard(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
             ),
-            title: Text(
-              item.title,
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.textPrimary,
-              ),
+            child: Icon(icon, size: 20, color: color),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  material.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'v${material.version}${material.sizeLabel.isEmpty ? '' : ' · ${material.sizeLabel}'}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: StudentColors.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
           ),
-      ],
+          IconButton(
+            icon: const Icon(Icons.download_outlined,
+                size: 20, color: StudentColors.primary),
+            onPressed: onDownload,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -388,6 +426,7 @@ class _CourseAssignmentTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final graded = assignment.status == AssignmentStatus.graded;
     return SageCard(
       padding: const EdgeInsets.all(14),
       child: Row(
@@ -395,13 +434,15 @@ class _CourseAssignmentTile extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: StudentColors.primaryContainer,
+              color: graded
+                  ? StudentColors.successSoft
+                  : StudentColors.primaryContainer,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.assignment_outlined,
               size: 20,
-              color: StudentColors.surfaceLowest,
+              color: graded ? StudentColors.success : StudentColors.surfaceLowest,
             ),
           ),
           const SizedBox(width: 12),
@@ -434,9 +475,208 @@ class _CourseAssignmentTile extends ConsumerWidget {
             size: SageButtonSize.small,
             onPressed: () =>
                 context.go('/student/submit/${assignment.id}'),
-            child: Text(assignment.status == AssignmentStatus.graded
-                ? 'View'
-                : 'Submit'),
+            child: Text(graded ? 'View' : 'Submit'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuizTile extends StatelessWidget {
+  const _QuizTile({required this.quiz});
+
+  final Quiz quiz;
+
+  @override
+  Widget build(BuildContext context) {
+    return SageCard(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: StudentColors.secondaryContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.quiz_outlined,
+              size: 20,
+              color: StudentColors.primary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  quiz.title,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  quiz.footnote ?? '${quiz.questionCount} questions',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: StudentColors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          SageButton(
+            variant: SageButtonVariant.accent,
+            size: SageButtonSize.small,
+            onPressed: () => context.go('/student/quiz/${quiz.id}'),
+            child: Text(quiz.buttonLabel ?? 'Start'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExamTile extends StatelessWidget {
+  const _ExamTile({required this.exam});
+
+  final ApiExam exam;
+
+  @override
+  Widget build(BuildContext context) {
+    final date = exam.scheduledAt;
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final two = date.minute.toString().padLeft(2, '0');
+    final when = '${date.day} ${months[date.month - 1]} \u00b7 '
+        '${date.hour}:$two';
+    return SageCard(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: StudentColors.errorContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.event_seat_outlined,
+              size: 20,
+              color: StudentColors.error,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  exam.title,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    when,
+                    if (exam.durationMinutes != null)
+                      '${exam.durationMinutes} min',
+                    if (exam.venue != null && exam.venue!.isNotEmpty)
+                      exam.venue!,
+                  ].join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: StudentColors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeedTile extends StatelessWidget {
+  const _FeedTile({required this.item});
+
+  final ApiAnnouncement item;
+
+  @override
+  Widget build(BuildContext context) {
+    final when = item.createdAt;
+    final time = '${when.hour}:${when.minute.toString().padLeft(2, '0')}';
+    return SageCard(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: StudentColors.primaryContainer,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: const Icon(
+              Icons.campaign_outlined,
+              size: 17,
+              color: StudentColors.surfaceLowest,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        item.title,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      time,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: StudentColors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  item.body,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: StudentColors.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),

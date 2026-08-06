@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../data/models/lecturer.dart';
+import '../../data/models/api/assignment.dart';
+import '../../data/models/api/course.dart';
 import '../../shared/widgets/sage_badge.dart';
 import '../../shared/widgets/sage_progress_bar.dart';
 import 'lecturer_colors.dart';
@@ -10,18 +11,22 @@ import 'lecturer_controller.dart';
 import 'lecturer_scaffold.dart';
 import 'lecturer_widgets.dart';
 
-/// Lecturer tasks — "Pending Grading" cards per course plus the full list of
-/// assignments. Maps to the Stitch grading_submissions reference screen.
+/// Lecturer tasks — "Pending Grading" cards per assignment plus the full list
+/// of assignments. Maps to the Stitch grading_submissions reference screen.
 class LecturerTasksPage extends ConsumerWidget {
   const LecturerTasksPage({super.key});
 
+  String _codeOf(List<ApiCourse> courses, String courseId) {
+    for (final c in courses) {
+      if (c.id == courseId) return c.code;
+    }
+    return 'COURSE';
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final controller = ref.watch(lecturerControllerProvider.notifier);
-    final assignments = controller.assignments;
-    final grading = assignments.where(
-      (a) => a.status == LecturerAssignmentStatus.grading,
-    );
+    final assignmentsAsync = ref.watch(lecturerAllAssignmentsProvider);
+    final coursesAsync = ref.watch(lecturerApiCoursesProvider);
 
     return LecturerPageScaffold(
       child: ListView(
@@ -44,9 +49,24 @@ class LecturerTasksPage extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 16),
-          if (grading.isNotEmpty)
-            for (final assignment in grading) ...[
-              _GradingCard(assignment: assignment),
+          if (assignmentsAsync.isLoading)
+            const Column(
+              children: [
+                LecturerSkeletonBlock(height: 120, radius: 14),
+                SizedBox(height: 12),
+                LecturerSkeletonBlock(height: 120, radius: 14),
+              ],
+            )
+          else if (assignmentsAsync.hasError)
+            _TasksError(
+              onRetry: () => ref.invalidate(lecturerAllAssignmentsProvider),
+            )
+          else
+            for (final assignment in assignmentsAsync.value!) ...[
+              _PendingGradingTile(
+                assignment: assignment,
+                code: _codeOf(coursesAsync.value?.items ?? const [], assignment.courseId),
+              ),
               const SizedBox(height: 12),
             ],
           const SizedBox(height: 8),
@@ -56,15 +76,18 @@ class LecturerTasksPage extends ConsumerWidget {
             onTrailingTap: () => context.push('/lecturer/create_assignment'),
           ),
           const SizedBox(height: 10),
-          if (assignments.isEmpty)
+          if (assignmentsAsync.value?.isEmpty ?? true)
             const LecturerEmptyState(
               icon: Icons.assignment_outlined,
               title: 'No assignments yet',
               description: 'Create your first assignment to get started.',
             )
           else
-            for (final assignment in assignments) ...[
-              _AssignmentRow(assignment: assignment),
+            for (final assignment in assignmentsAsync.value!) ...[
+              _AssignmentRow(
+                assignment: assignment,
+                code: _codeOf(coursesAsync.value?.items ?? const [], assignment.courseId),
+              ),
               const SizedBox(height: 10),
             ],
         ],
@@ -73,19 +96,72 @@ class LecturerTasksPage extends ConsumerWidget {
   }
 }
 
-class _GradingCard extends StatelessWidget {
-  const _GradingCard({required this.assignment});
+class _TasksError extends StatelessWidget {
+  const _TasksError({required this.onRetry});
 
-  final LecturerAssignment assignment;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: LecturerColors.surfaceLowest,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: LecturerColors.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            size: 20,
+            color: LecturerColors.error,
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Could not load assignments.',
+              style: TextStyle(
+                fontSize: 13,
+                color: LecturerColors.onSurfaceVariant,
+              ),
+            ),
+          ),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pending-grading card — only surfaced when an assignment still has
+/// ungraded submissions.
+class _PendingGradingTile extends ConsumerWidget {
+  const _PendingGradingTile({required this.assignment, required this.code});
+
+  final ApiAssignment assignment;
+  final String code;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final summaryAsync =
+        ref.watch(lecturerAssignmentGradingSummaryProvider(assignment.id));
+    final summary = summaryAsync.value;
+    if (summary == null || summary.graded >= summary.total) {
+      return const SizedBox.shrink();
+    }
+    final pending = summary.total - summary.graded;
+    final fraction = summary.total == 0
+        ? 1.0
+        : (summary.graded / summary.total).clamp(0.0, 1.0);
+
     return Material(
       color: LecturerColors.surfaceLowest,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () => context.push('/lecturer/grading', extra: assignment.id),
+        onTap: () =>
+            context.push('/lecturer/grading', extra: assignment.id),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -98,12 +174,12 @@ class _GradingCard extends StatelessWidget {
               Row(
                 children: [
                   LecturerTag(
-                    label: assignment.code,
+                    label: code,
                     variant: SageBadgeVariant.accent,
                   ),
                   const Spacer(),
                   Text(
-                    '${assignment.pendingCount} Pending',
+                    '$pending Pending',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -123,7 +199,7 @@ class _GradingCard extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                assignment.subtitle,
+                assignment.instructions ?? assignment.dueLabel,
                 style: const TextStyle(
                   fontSize: 12,
                   color: LecturerColors.onSurfaceVariant,
@@ -133,7 +209,7 @@ class _GradingCard extends StatelessWidget {
               Row(
                 children: [
                   Text(
-                    '${assignment.gradedCount}/${assignment.totalSubmissions} '
+                    '${summary.graded}/${summary.total} '
                     'Graded',
                     style: const TextStyle(
                       fontSize: 12,
@@ -142,7 +218,7 @@ class _GradingCard extends StatelessWidget {
                   ),
                   const Spacer(),
                   Text(
-                    '${(assignment.gradedFraction * 100).round()}%',
+                    '${(fraction * 100).round()}%',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -153,7 +229,7 @@ class _GradingCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               SageProgressBar(
-                value: assignment.gradedFraction,
+                value: fraction,
                 height: 6,
                 showPercent: false,
               ),
@@ -165,25 +241,36 @@ class _GradingCard extends StatelessWidget {
   }
 }
 
-class _AssignmentRow extends StatelessWidget {
-  const _AssignmentRow({required this.assignment});
+class _AssignmentRow extends ConsumerWidget {
+  const _AssignmentRow({required this.assignment, required this.code});
 
-  final LecturerAssignment assignment;
+  final ApiAssignment assignment;
+  final String code;
 
-  String get _statusLabel => switch (assignment.status) {
-    LecturerAssignmentStatus.grading => 'Grading',
-    LecturerAssignmentStatus.active => 'Active',
-    LecturerAssignmentStatus.closed => 'Closed',
-  };
+  String _statusLabel(int pending) {
+    if (pending > 0) return 'Grading';
+    if (assignment.deadlineAt.isBefore(DateTime.now())) return 'Closed';
+    return 'Active';
+  }
 
-  SageBadgeVariant get _statusVariant => switch (assignment.status) {
-    LecturerAssignmentStatus.grading => SageBadgeVariant.accent,
-    LecturerAssignmentStatus.active => SageBadgeVariant.info,
-    LecturerAssignmentStatus.closed => SageBadgeVariant.neutral,
-  };
+  SageBadgeVariant _statusVariant(int pending) {
+    if (pending > 0) return SageBadgeVariant.accent;
+    if (assignment.deadlineAt.isBefore(DateTime.now())) {
+      return SageBadgeVariant.neutral;
+    }
+    return SageBadgeVariant.info;
+  }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final summaryAsync =
+        ref.watch(lecturerAssignmentGradingSummaryProvider(assignment.id));
+    final summary = summaryAsync.value;
+    if (summary == null) {
+      return const LecturerSkeletonBlock(height: 72, radius: 14);
+    }
+    final pending = summary.total - summary.graded;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -220,7 +307,7 @@ class _AssignmentRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${assignment.code} \u2022 ${assignment.dueLabel ?? ''}',
+                  '$code \u2022 ${assignment.dueLabel}',
                   style: const TextStyle(
                     fontSize: 12,
                     color: LecturerColors.onSurfaceVariant,
@@ -233,10 +320,10 @@ class _AssignmentRow extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              LecturerTag(label: _statusLabel, variant: _statusVariant),
+              LecturerTag(label: _statusLabel(pending), variant: _statusVariant(pending)),
               const SizedBox(height: 4),
               Text(
-                '${assignment.pendingCount} left',
+                '$pending left',
                 style: const TextStyle(
                   fontSize: 11,
                   color: LecturerColors.onSurfaceVariant,

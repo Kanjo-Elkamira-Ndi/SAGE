@@ -143,6 +143,28 @@ class ApiClient {
     }
   }
 
+  /// Uploads raw bytes to a presigned object-storage URL (e.g. GCS). Uses a
+  /// dedicated, auth-free `Dio` so the bearer token is never sent to the
+  /// storage host and the cookie/refresh interceptors are skipped.
+  Future<void> uploadToSignedUrl(
+    String url, {
+    required List<int> bytes,
+    required String contentType,
+  }) async {
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 60),
+        receiveTimeout: const Duration(seconds: 30),
+      ),
+    );
+    await dio.put<dynamic>(
+      url,
+      data: bytes,
+      options: Options(contentType: contentType),
+    );
+  }
+
   // ---- Envelope + error handling -----------------------------------------
 
   dynamic _unwrap(Response<dynamic> res) {

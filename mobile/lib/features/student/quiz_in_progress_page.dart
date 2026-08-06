@@ -1,16 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/sage_colors.dart';
-import '../../data/models/student.dart';
+import '../../data/models/api/quiz.dart';
 import '../../shared/widgets/sage_button.dart';
-import 'quiz_results_page.dart';
 import 'student_colors.dart';
 import 'student_controller.dart';
 
-/// Quiz attempt screen — question stepper with A–D options, progress, and a
-/// finishing flow that hands the score to the results page (Stitch quiz screen).
+/// Quiz attempt screen — question stepper with A–D options, countdown, and a
+/// finishing flow that submits answers to the API (Stitch quiz screen).
+/// Wired to `POST /quizzes/:id/start` and `POST /quizzes/:id/submit`.
 class QuizInProgressPage extends ConsumerStatefulWidget {
   const QuizInProgressPage({super.key, required this.quizId});
 
@@ -21,51 +23,186 @@ class QuizInProgressPage extends ConsumerStatefulWidget {
 }
 
 class _QuizInProgressPageState extends ConsumerState<QuizInProgressPage> {
-  static const _questions = <QuizQuestion>[
-    QuizQuestion(
-      text: 'Which data structure uses FIFO ordering?',
-      options: ['Stack', 'Queue', 'Linked List', 'Hash Table'],
-      answerIndex: 1,
-    ),
-    QuizQuestion(
-      text: 'What is the time complexity of binary search?',
-      options: ['O(n)', 'O(n log n)', 'O(log n)', 'O(1)'],
-      answerIndex: 2,
-    ),
-    QuizQuestion(
-      text: 'Which sorting algorithm has the best average case?',
-      options: ['Bubble Sort', 'Insertion Sort', 'Merge Sort', 'Selection Sort'],
-      answerIndex: 2,
-    ),
-  ];
-
+  ApiQuizAttempt? _attempt;
+  Object? _error;
   int _index = 0;
   int? _selected;
-  final List<int?> _answers = [];
+  List<String?> _answers = const [];
+  Timer? _timer;
+  int _secondsLeft = 0;
+  bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startAttempt();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _startAttempt() async {
+    setState(() {
+      _attempt = null;
+      _error = null;
+    });
+    try {
+      final attempt = await ref
+          .read(apiQuizRepositoryProvider)
+          .start(widget.quizId);
+      if (!mounted) return;
+      setState(() {
+        _attempt = attempt;
+        _answers = List<String?>.filled(attempt.questions.length, null);
+        _secondsLeft =
+            (attempt.timeLimitMinutes ?? 0) > 0 ? attempt.timeLimitMinutes! * 60 : 0;
+        _index = 0;
+        _selected = null;
+      });
+      if (_secondsLeft > 0) _startTimer();
+    } on Exception catch (error) {
+      if (mounted) setState(() => _error = error);
+    }
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() => _secondsLeft -= 1);
+      if (_secondsLeft <= 0) {
+        timer.cancel();
+        _submitAnswers();
+      }
+    });
+  }
+
+  String _timeLeftLabel() {
+    final s = _secondsLeft < 0 ? 0 : _secondsLeft;
+    final m = (s ~/ 60).toString().padLeft(2, '0');
+    final sec = (s % 60).toString().padLeft(2, '0');
+    return '$m:$sec';
+  }
+
+  Future<void> _submitAnswers() async {
+    if (_submitting || _attempt == null) return;
+    setState(() => _submitting = true);
+    _timer?.cancel();
+    final questions = _attempt!.questions;
+    final answers = <Map<String, dynamic>>[
+      for (var i = 0; i < questions.length; i++)
+        if (_answers[i] != null)
+          {'questionId': questions[i].id, 'answer': _answers[i]},
+    ];
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref
+          .read(apiQuizRepositoryProvider)
+          .submit(widget.quizId, answers: answers);
+      if (!mounted) return;
+      context.go('/student/quiz-results/${widget.quizId}');
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not submit the quiz. Try again.')),
+      );
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  void _next() {
+    final questions = _attempt!.questions;
+    if (_selected == null) return;
+    _answers[_index] = _selected! < questions[_index].options!.length
+        ? questions[_index].options![_selected!]
+        : '';
+    if (_index == questions.length - 1) {
+      _submitAnswers();
+      return;
+    }
+    setState(() {
+      _index += 1;
+      _selected = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final quiz = ref.watch(studentControllerProvider.notifier).quizById(widget.quizId);
-    final question = _questions[_index];
+    final attempt = _attempt;
 
-    void next() {
-      if (_selected == null) return;
-      _answers.add(_selected);
-      if (_index == _questions.length - 1) {
-        var correct = 0;
-        for (var i = 0; i < _answers.length; i++) {
-          if (_answers[i] == _questions[i].answerIndex) correct++;
-        }
-        final score = (100 * correct / _questions.length).round();
-        context.go('/student/quiz-results/${quiz.id}',
-            extra: QuizResultsPayload(score, _answers));
-        return;
-      }
-      setState(() {
-        _index += 1;
-        _selected = null;
-      });
+    if (_error != null) {
+      return Scaffold(
+        backgroundColor: StudentColors.background,
+        appBar: AppBar(
+          backgroundColor: StudentColors.surfaceLowest,
+          foregroundColor: StudentColors.primary,
+          elevation: 0,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.cloud_off_outlined,
+                  size: 40,
+                  color: StudentColors.onSurfaceVariant,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Could not start the quiz',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: StudentColors.primary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Check your connection and try again.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: StudentColors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SageButton(
+                  onPressed: _startAttempt,
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
     }
+
+    final questions = attempt?.questions ?? const <ApiAttemptQuestion>[];
+    final quizTitle =
+        ref.watch(apiQuizByIdProvider(widget.quizId)).value?.title;
+    if (questions.isEmpty) {
+      return Scaffold(
+        backgroundColor: StudentColors.background,
+        appBar: AppBar(
+          backgroundColor: StudentColors.surfaceLowest,
+          foregroundColor: StudentColors.primary,
+          elevation: 0,
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(color: StudentColors.primary),
+        ),
+      );
+    }
+
+    final question = questions[_index];
+    final options = question.options ?? const <String>[];
 
     return Scaffold(
       backgroundColor: StudentColors.background,
@@ -74,7 +211,7 @@ class _QuizInProgressPageState extends ConsumerState<QuizInProgressPage> {
         foregroundColor: StudentColors.primary,
         elevation: 0,
         title: Text(
-          quiz.title,
+          quizTitle ?? 'Quiz',
           style: const TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w700,
@@ -108,16 +245,17 @@ class _QuizInProgressPageState extends ConsumerState<QuizInProgressPage> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(999),
                     child: LinearProgressIndicator(
-                      value: (_index + 1) / _questions.length,
+                      value: (_index + 1) / questions.length,
                       minHeight: 6,
                       backgroundColor: StudentColors.surfaceHighest,
-                      valueColor: const AlwaysStoppedAnimation(StudentColors.primary),
+                      valueColor:
+                          const AlwaysStoppedAnimation(StudentColors.primary),
                     ),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Text(
-                  '${_index + 1}/${_questions.length}',
+                  '${_index + 1}/${questions.length}',
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -141,9 +279,11 @@ class _QuizInProgressPageState extends ConsumerState<QuizInProgressPage> {
                     color: StudentColors.primary,
                   ),
                   const SizedBox(width: 8),
-                  const Text(
-                    'Time left: 03:24',
-                    style: TextStyle(
+                  Text(
+                    _secondsLeft > 0
+                        ? 'Time left: ${_timeLeftLabel()}'
+                        : 'No time limit',
+                    style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: StudentColors.primary,
@@ -151,7 +291,9 @@ class _QuizInProgressPageState extends ConsumerState<QuizInProgressPage> {
                   ),
                   const Spacer(),
                   Text(
-                    '${quiz.durationMins} min quiz',
+                    (attempt!.timeLimitMinutes ?? 0) > 0
+                        ? '${attempt.timeLimitMinutes} min quiz'
+                        : 'Untimed',
                     style: const TextStyle(
                       fontSize: 12,
                       color: StudentColors.onSurfaceVariant,
@@ -172,7 +314,7 @@ class _QuizInProgressPageState extends ConsumerState<QuizInProgressPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              question.text,
+              question.questionText,
               style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
@@ -184,25 +326,30 @@ class _QuizInProgressPageState extends ConsumerState<QuizInProgressPage> {
             Expanded(
               child: ListView(
                 children: [
-                  for (var i = 0; i < question.options.length; i++)
+                  for (var i = 0; i < options.length; i++)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 10),
                       child: _OptionTile(
                         letter: String.fromCharCode(65 + i),
-                        text: question.options[i],
+                        text: options[i],
                         selected: _selected == i,
-                        onTap: () => setState(() => _selected = i),
+                        onTap: _submitting
+                            ? null
+                            : () => setState(() => _selected = i),
                       ),
                     ),
                 ],
               ),
             ),
             SageButton(
-              variant: _selected == null ? SageButtonVariant.primary : SageButtonVariant.accent,
+              variant: _selected == null
+                  ? SageButtonVariant.primary
+                  : SageButtonVariant.accent,
               fullWidth: true,
-              onPressed: _selected == null ? null : next,
+              isLoading: _submitting,
+              onPressed: _selected == null || _submitting ? null : _next,
               child: Text(
-                _index == _questions.length - 1 ? 'Finish Quiz' : 'Next Question',
+                _index == questions.length - 1 ? 'Finish Quiz' : 'Next Question',
               ),
             ),
           ],
@@ -223,7 +370,7 @@ class _OptionTile extends StatelessWidget {
   final String letter;
   final String text;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

@@ -9,7 +9,7 @@ Both are thin clients. The API is the source of truth for permissions; hiding a 
 
 Base URL placeholder: `https://api.sage.app/v1` (dev: `http://localhost:4000/v1`).
 
-**Status (Part A — mobile):** Section 0 (shared contract) is implemented in `mobile/lib/core/*` (dio client, Bearer + 401→refresh→retry, cookie jar, error-code copy map, secure storage, pagination). Auth screens are wired via `ApiAuthRepository`, and the student **Dashboard / Courses / Notifications** screens are live against the API (`mobile/lib/features/student/*`, `data/repositories/api/*`). Lecturer screens and the remaining student screens (materials, assignments, quizzes, exams, performance analytics) are still on mocks. Verified end-to-end against `localhost:4000` (register → login → me → courses → notifications → performance → read-all → forgot-password → 429).
+**Status (Part A — mobile):** Section 0 (shared contract) is implemented in `mobile/lib/core/*` (dio client, Bearer + 401→refresh→retry, cookie jar, error-code copy map, secure storage, pagination). Auth screens are wired via `ApiAuthRepository`, and **every student and lecturer screen is live against the API** (`mobile/lib/features/{student,lecturer}/*`, `data/repositories/api/*`): Dashboard, Courses, Course detail (materials/assignments/quizzes/exams/feed), Tasks, Submit assignment (signed upload), Quiz attempt + results, Performance analytics, Notifications, and the lecturer Dashboard/Courses/Tasks/Course management (materials + announcements CRUD)/Create assignment/Grading. Repository bindings live in `data/repositories/api_repository_providers.dart`; the mock repositories and display models (`mock_student_repository`, `mock_lecturer_repository`, `models/lecturer.dart`, legacy `StudentController`) were deleted. `flutter analyze` clean, 9 widget tests green. Verified end-to-end against `localhost:4000` (register → login → me → courses → notifications → performance → read-all → forgot-password → 429).
 
 ---
 
@@ -107,51 +107,53 @@ Signed URLs expire quickly (downloads default 5 min) — always fetch a fresh on
 
 ### A.2 Student screens → endpoints
 
-✅ = wired to the API. Others still on mocks (`studentControllerProvider`).
+✅ = wired to the API (providers in `features/student/student_controller.dart`).
 
 | Screen | Endpoints |
 |---|---|
 | Dashboard ✅ | `GET /courses` (enrolled), `GET /notifications` (unread badge), `GET /performance/me` (overview card) |
 | My Courses / Course list ✅ | `GET /courses` |
-| Course Detail | `GET /courses/:id` (outline + detail) — nav wired, detail body still on mock |
-| Course Materials | `GET /courses/:id/materials` |
-| Material Viewer | `GET /courses/:id/materials`, then `GET /materials/:id/download-url` → stream to viewer (`pdfx`). Support versioning via `versions` if exposed |
-| Assignments List | `GET /courses/:id/assignments` (student rows include `mySubmission`) |
-| Assignment Detail | `GET /courses/:id/assignments` (detail from the row) + `GET /submissions/:id/download-url` for own submission |
-| Submit assignment | `POST /submissions/upload-url` → PUT to Supabase → `POST /submissions` (finalize). Re-submit bumps `attempts`; handle `DEADLINE_PASSED`, `SUBMISSION_FILE_MISSING` |
-| Quizzes List | `GET /courses/:id/quizzes` (student rows include own best score) |
-| Quiz In Progress | `POST /quizzes/:id/start` (question IDs, no answers) → `POST /quizzes/:id/submit` (auto-graded). Handle `QUIZ_NOT_AVAILABLE`, `QUIZ_CLOSED`, `QUIZ_ALREADY_ATTEMPTED`, `QUIZ_TIME_EXPIRED` (client countdown must match server time limit; on expiry submit what's answered) |
-| Quiz Results | `POST /quizzes/:id/submit` response (immediate) + `GET /quizzes/:id/results` (reopen) |
-| Performance Dashboard | `GET /performance/me` (overall + metrics), `GET /performance/me/risk` (risk breakdown card + plain-language reasons) — providers exist, analytics screen still on mock |
+| Course Detail ✅ | `GET /courses/:id` (via enrolled list), `GET /courses/:id/materials`, `GET /courses/:id/assignments`, `GET /courses/:id/quizzes`, `GET /courses/:id/exams`, `GET /announcements` (feed filter) |
+| Course Materials ✅ | `GET /courses/:id/materials` (tiles with type/size/version); `GET /materials/:id/download-url` → signed URL copied for the viewer |
+| Material Viewer | `GET /materials/:id/download-url` → stream to viewer (`pdfx`). Download URL is surfaced today; native viewer deferred |
+| Assignments List ✅ | `GET /courses/:id/assignments` (student rows include `mySubmission`) |
+| Assignment Detail ✅ | detail from the row (`GET /courses/:id/assignments`) |
+| Submit assignment ✅ | `POST /submissions/upload-url` → PUT to Supabase → `POST /submissions` (finalize). Re-submit bumps `attempts`; handles `DEADLINE_PASSED` |
+| Quizzes List ✅ | `GET /courses/:id/quizzes` (student rows include own best score) |
+| Quiz In Progress ✅ | `POST /quizzes/:id/start` (question IDs, no answers) → `POST /quizzes/:id/submit` (auto-graded). Handles `QUIZ_NOT_AVAILABLE`, `QUIZ_CLOSED`, `QUIZ_ALREADY_ATTEMPTED`; client countdown matches server time limit and auto-submits on expiry |
+| Quiz Results ✅ | `GET /quizzes/:id/results` (reopen) |
+| Performance Dashboard ✅ | `GET /performance/me` (overall + metrics), `GET /performance/me/risk` (risk breakdown card) |
 | Notifications Center ✅ | `GET /notifications` (`?isRead=&type=`), `PATCH /notifications/:id/read`, `PATCH /notifications/read-all`. Unread badge = `data.unread` |
-| Enroll | `POST /courses/:id/enroll` (if open enrollment entry point exists) |
+| Enroll | `POST /courses/:id/enroll` (no open-enrollment UI entry point) |
 
 ### A.3 Lecturer screens → endpoints
 
+✅ = wired to the API (providers in `features/lecturer/lecturer_controller.dart`).
+
 | Screen | Endpoints |
 |---|---|
-| Dashboard | `GET /courses` (owned), `GET /notifications` (unread badge) |
-| My Courses | `GET /courses` |
+| Dashboard ✅ | `GET /courses` (owned), `GET /assignments/:id/submissions` (pending-count fan-out) |
+| My Courses ✅ | `GET /courses` |
 | Course Create/Edit | `POST /courses`, `PATCH /courses/:id` (outline editor) |
-| Course Detail | `GET /courses/:id`, `GET /courses/:id/materials`, `GET /courses/:id/assignments`, `GET /courses/:id/exams`, `GET /courses/:id/quizzes` |
-| Materials Upload | `POST /materials/upload-url` → PUT to Supabase → `POST /materials` finalize; `POST /materials/:id/versions` for new versions. Handle `SUBMISSION_FILE_MISSING`-style storage errors |
-| Assignments Create | `POST /assignments` (deadline must be future — client validates too, `DEADLINE_PAST` otherwise) |
-| Submissions list + Grading | `GET /assignments/:id/submissions`, `PATCH /submissions/:id/grade` (`{ score, feedback }`), `GET /submissions/:id/download-url` per file. Handle `SCORE_EXCEEDS_MAX` |
+| Course Detail / Management ✅ | `GET /courses/:id`, `GET /courses/:id/materials` (upload via signed URL), `GET /courses/:id/assignments`, `GET /courses/:id/exams`, `GET /courses/:id/quizzes`; Materials + Announcements tabs CRUD |
+| Materials Upload ✅ | `POST /materials/upload-url` → PUT to Supabase → `POST /materials` finalize. `POST /materials/:id/versions` for new versions deferred |
+| Assignments Create ✅ | `POST /assignments` (client validates deadline is future) |
+| Submissions list + Grading ✅ | `GET /assignments/:id/submissions`, `PATCH /submissions/:id/grade` (`{ score, feedback }`) |
 | Exam management | `POST /exams`, `PATCH /exams/:id` |
 | Quiz Builder (manual) | `POST /quizzes`, `PATCH /quizzes/:id` |
 | AI-Assist panel | `POST /quizzes/generate` `{ courseId, materialId?, numQuestions? }` → returns **draft questions only** — review in UI, then publish via `POST /quizzes`. Handle `MATERIAL_*`, `PDF_PARSE_FAILED`, `GROQ_UNAVAILABLE`, `AI_OUTPUT_INVALID`, `TOO_MANY_REQUESTS` (429, 6/min) |
-| Course Performance | `GET /performance/courses/:id` (aggregates + per-student risk) |
-| Announcements (create) | `POST /announcements` `{ title, body, courseId? }` — no courseId = school-wide |
+| Course Performance | `GET /performance/courses/:id` (provider exists; per-student risk table not yet on a screen) |
+| Announcements (create) ✅ | `POST /announcements` `{ title, body, courseId? }`, `DELETE /announcements/:id` — no courseId = school-wide |
 
 ### A.4 Wiring order (mobile)
 
 1. ✅ `ApiAuthRepository` + Auth screens → session gate works end-to-end.
 2. ✅ `ApiCourseRepository` + `ApiNotificationRepository` (+ `ApiPerformanceRepository`) → student Dashboard + Course list + Notifications live.
-3. ⏳ `ApiMaterialRepository` (signed upload/download) → Materials.
-4. `ApiAssignmentRepository` + `ApiSubmissionRepository` → Assignments + Grading.
-5. `ApiQuizRepository` (incl. AI-assist) → Quizzes.
-6. `ApiExamRepository`, `ApiAnnouncementRepository`.
-7. Delete each `Mock…Repository` as its API twin lands; run `flutter analyze` + `flutter test` after each slice.
+3. ✅ `ApiMaterialRepository` (signed upload/download) → Materials (student tiles + lecturer upload).
+4. ✅ `ApiAssignmentRepository` → Assignments, Submit (signed upload/finalize), Tasks, Grading.
+5. ✅ `ApiQuizRepository` → Quiz attempt + results.
+6. ✅ `ApiExamRepository`, `ApiAnnouncementRepository` → course detail exams, lecturer announcement CRUD.
+7. ✅ Deleted the mock repositories and display models (`mock_student_repository`, `mock_lecturer_repository`, `models/lecturer.dart`, legacy `StudentController`); `flutter analyze` clean + 9 widget tests pass.
 
 ---
 

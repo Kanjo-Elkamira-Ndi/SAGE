@@ -18,4 +18,10 @@ class ApiPerformanceRepository {
     final data = await client.get('/performance/me/risk');
     return ApiRiskDetail.fromJson(data as Map<String, dynamic>);
   }
+
+  /// `GET /performance/courses/:id` (lecturer only) — aggregates + students.
+  Future<ApiCoursePerformance> coursePerformance(String courseId) async {
+    final data = await client.get('/performance/courses/$courseId');
+    return ApiCoursePerformance.fromJson(data as Map<String, dynamic>);
+  }
 }
