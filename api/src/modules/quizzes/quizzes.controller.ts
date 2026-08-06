@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { paramString } from '../../lib/params';
 import * as quizService from './quizzes.service';
-import type { CreateQuizInput, SubmitQuizInput, UpdateQuizInput } from './quizzes.schema';
+import type { CreateQuizInput, GenerateQuizInput, SubmitQuizInput, UpdateQuizInput } from './quizzes.schema';
 
 export async function createQuiz(req: Request, res: Response): Promise<void> {
   const quiz = await quizService.createQuiz(req.body as CreateQuizInput, req.user!.id);
@@ -39,4 +39,9 @@ export async function results(req: Request, res: Response): Promise<void> {
 export async function listCourseQuizzes(req: Request, res: Response): Promise<void> {
   const items = await quizService.listQuizzesForCourse(paramString(req.params.id), req.user!);
   res.json({ success: true, data: { courseId: req.params.id, quizzes: items } });
+}
+
+export async function generateQuiz(req: Request, res: Response): Promise<void> {
+  const result = await quizService.generateQuizDraft(req.body as GenerateQuizInput, req.user!.id);
+  res.status(201).json({ success: true, data: result });
 }

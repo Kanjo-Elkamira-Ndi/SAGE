@@ -246,3 +246,25 @@ export async function objectExists(storageKey: string): Promise<boolean> {
   );
   return ok;
 }
+
+/**
+ * Fetches the raw bytes of an object the server is authorized to read using
+ * its own signed download URL (service role). Used for server-side text
+ * extraction of materials, e.g. when generating AI quiz questions.
+ */
+export async function downloadObjectBytes(storageKey: string): Promise<Buffer> {
+  const { downloadUrl } = await createSignedDownloadUrl(
+    storageKey,
+    60,
+  );
+  const res = await fetch(downloadUrl);
+  if (!res.ok) {
+    throw new AppError(
+      'STORAGE_DOWNLOAD_FAILED',
+      `Failed to download material content (HTTP ${res.status}).`,
+      502,
+    );
+  }
+  const arrayBuf = await res.arrayBuffer();
+  return Buffer.from(arrayBuf);
+}

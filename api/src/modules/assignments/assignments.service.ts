@@ -11,6 +11,7 @@ import {
   requireLecturerOwns,
   requireStudentEnrolled,
 } from '../courses/courses.service';
+import { recomputeStudentSnapshotsForGrade } from '../performance/performance.service';
 import type {
   CreateAssignmentInput,
   CreateSubmissionUploadUrlInput,
@@ -384,6 +385,7 @@ export async function gradeSubmission(
     entityId: submissionId,
     metadata: { assignmentId: assignment.id, score: input.score },
   });
+  void recomputeStudentSnapshotsForGrade(submission.studentId, assignment.courseId);
   return getSubmissionOrThrow(result.rows[0].id);
 }
 

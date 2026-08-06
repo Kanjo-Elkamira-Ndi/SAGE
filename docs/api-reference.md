@@ -85,9 +85,9 @@ All responses follow:
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
 | GET | `/courses/:id/quizzes` | student/lecturer | List quizzes (student rows include own best score) |
-| POST | `/quizzes` | lecturer | Create quiz with questions (MCQ + true/false) |
-| POST | `/quizzes/generate` | lecturer | Planned: AI-assisted question generation (not yet implemented) |
-| PATCH | `/quizzes/:id` | owning lecturer | Update quiz + replace questions |
+| POST | `/quizzes` | lecturer | Create quiz with questions (MCQ + true/false); `aiGenerated` flag optional (default false) |
+| POST | `/quizzes/generate` | lecturer | AI question generation. Body `{ courseId, materialId?, numQuestions? (1–20, default 5) }`. Extracts text from a course material, calls Groq, returns **validated draft questions for review — nothing is saved**. Rate-limited (6/min by default). Errors: `MATERIAL_NOT_FOUND`, `MATERIAL_TEXT_EMPTY`, `MATERIAL_TYPE_UNSUPPORTED`, `PDF_PARSE_FAILED`, `GROQ_UNAVAILABLE` (503 no key / 502 Groq failure), `AI_OUTPUT_INVALID` (502 output failed schema validation after retries), `TOO_MANY_REQUESTS` (429) |
+| PATCH | `/quizzes/:id` | owning lecturer | Update quiz + replace questions; set `aiGenerated` for transparency |
 | POST | `/quizzes/:id/start` | student | Start attempt (returns question IDs **without** correct answers; one attempt per student) |
 | POST | `/quizzes/:id/submit` | student | Submit answers → server auto-grades; returns score + per-question results (correct answers revealed) |
 | GET | `/quizzes/:id/results` | student | View own graded result (full per-question breakdown) |
@@ -96,10 +96,11 @@ All responses follow:
 
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
-| GET | `/performance/me` | student | Own GPA, trends, charts data |
-| GET | `/performance/me/risk` | student | Own risk level + plain-language explanation |
-| GET | `/performance/course/:id` | lecturer | Aggregate course performance stats |
-| GET | `/admin/performance/at-risk` | admin/lecturer | List of currently at-risk students |
+| GET | `/performance/me` | student | Own overall snapshot + metrics: `{ overall: { snapshot, metrics } }` — GPA, per-course averages, missed-submission rate |
+| GET | `/performance/me/risk` | student | Own risk breakdown: `{ gpaDecline, missedSubmissionRate, quizDecline, lowEngagement, score, level, lastSnapshotDate }` (deterministic, `workflows.md` formula) |
+| GET | `/performance/courses/:id` | owning lecturer | Course aggregates + per-student rows (gpa, assignment/quiz %, risk score/level) |
+| GET | `/admin/performance/at-risk` | admin | Latest overall snapshot per student; default `minScore` = 0.33 (medium+) so only actionable students show. Overrides: `?minScore=0` (everyone with a snapshot), `?level=medium\|high` |
+| POST | `/admin/performance/recompute-snapshots` | admin | One-off recompute (all students, or `?courseId=` for one course). Same code path as the weekly cron |
 
 ## Notifications
 
@@ -138,6 +139,13 @@ All responses follow:
 | `QUIZ_TIME_EXPIRED` | Time limit exceeded — attempt auto-submitted |
 | `INVALID_QUESTION` | Submitted answer references a question not in the quiz |
 | `QUIZ_NOT_TAKEN` | No graded attempt to view results for |
+| `GROQ_UNAVAILABLE` | AI generation not configured (503, no key) or Groq call failed (502) |
+| `AI_OUTPUT_INVALID` | Groq output failed schema validation after retries (502) |
+| `MATERIAL_NOT_FOUND` | No current material in the course to generate from, or selected material missing |
+| `MATERIAL_TEXT_EMPTY` | Material has no extractable text (422) |
+| `MATERIAL_TYPE_UNSUPPORTED` | PPTX materials can't be text-extracted in v1 (422) |
+| `PDF_PARSE_FAILED` | pdf-parse failed on the material (422) |
+| `TOO_MANY_REQUESTS` | Rate limit exceeded (429; quiz generation defaults to 6/min) |
 | `VALIDATION_ERROR` | Request body failed schema validation |
 | `NOT_FOUND` | Resource does not exist or not visible to requester |
 

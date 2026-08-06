@@ -2,9 +2,11 @@ import { createApp } from './app';
 import { env } from './config/env';
 import { pool } from './config/db';
 import { logger } from './lib/logger';
+import { startScheduler } from './jobs/scheduler';
 
 async function main(): Promise<void> {
   const app = createApp();
+  startScheduler();
 
   const server = app.listen(env.PORT, () => {
     logger.info(`SAGE API listening on http://localhost:${env.PORT} (${env.NODE_ENV})`);

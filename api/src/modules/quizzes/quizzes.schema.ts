@@ -38,6 +38,7 @@ export const createQuizSchema = z.object({
   availableFrom: z.string().datetime({ offset: true }).optional(),
   availableUntil: z.string().datetime({ offset: true }).optional(),
   questions: z.array(questionSchema).min(1, 'At least one question is required').max(100),
+  aiGenerated: z.boolean().optional().default(false),
 });
 
 export const updateQuizSchema = z.object({
@@ -46,6 +47,7 @@ export const updateQuizSchema = z.object({
   availableFrom: z.string().datetime({ offset: true }).nullable().optional(),
   availableUntil: z.string().datetime({ offset: true }).nullable().optional(),
   questions: z.array(questionSchema).min(1).max(100).optional(),
+  aiGenerated: z.boolean().optional(),
 });
 
 export const submitQuizSchema = z.object({
@@ -71,3 +73,60 @@ export interface QuizQuestionDraft {
   correctAnswer: string;
   points?: number;
 }
+
+export const generateQuizSchema = z.object({
+  courseId: z.string().uuid('Invalid course'),
+  materialId: z.string().uuid('Invalid material').optional(),
+  numQuestions: z.coerce
+    .number()
+    .int()
+    .min(1, 'At least 1 question is required')
+    .max(20, 'At most 20 questions can be generated at once')
+    .default(5),
+});
+export type GenerateQuizInput = z.infer<typeof generateQuizSchema>;
+
+/**
+ * Schema for a single generated question coming back from Groq's JSON mode.
+ * Reuses the same correctness rules (options contain correctAnswer, etc.).
+ */
+export const generatedQuestionSchema = z
+  .object({
+    questionText: z.string().trim().min(1).max(1000),
+    questionType: z.enum(['mcq', 'true_false']),
+    options: z.array(z.string().trim().min(1)).min(2).max(6).optional(),
+    correctAnswer: z.string().trim().min(1).max(200),
+    points: z.coerce.number().int().min(1).max(20).default(1),
+  })
+  .superRefine((question, ctx) => {
+    if (question.questionType === 'true_false') {
+      const normalized = question.correctAnswer.trim().toLowerCase();
+      if (normalized !== 'true' && normalized !== 'false') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['correctAnswer'],
+          message: 'For true_false questions the correctAnswer must be "true" or "false".',
+        });
+      }
+      if (question.options) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['options'],
+          message: 'true_false questions must not include options.',
+        });
+      }
+    } else if (question.questionType === 'mcq') {
+      if (!question.options || !question.options.includes(question.correctAnswer)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['correctAnswer'],
+          message: 'correctAnswer must be one of the provided options.',
+        });
+      }
+    }
+  });
+
+export const groqDraftResponseSchema = z.object({
+  questions: z.array(generatedQuestionSchema).min(1).max(20),
+});
+export type GroqDraftResponse = z.infer<typeof groqDraftResponseSchema>;

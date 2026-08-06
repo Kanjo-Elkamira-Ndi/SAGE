@@ -36,17 +36,18 @@ Each phase should end in something testable via Postman/curl before moving to th
 - Attempt start/submit flow with **server-side auto-grading** (never trust client-submitted scores).
 - Time-limit enforcement (`available_from`/`available_until`, optional `time_limit_minutes` check against `started_at`).
 
-## Phase 5 — Groq AI Integration (Quiz Generation)
-- Groq client wrapper (single module, `apps/api/src/lib/groq.ts`), key stored server-side only.
-- `POST /quizzes/generate`: extract text from a material (PDF parsing lib), prompt Groq with strict JSON-schema instructions, validate/parse response, return draft questions for lecturer review — **never auto-publish AI-generated questions without lecturer confirmation**.
-- Mark quiz `ai_generated = true` for transparency.
+## Phase 5 — Groq AI Integration (Quiz Generation) — ✅ DONE
+- Groq client wrapper (`api/src/lib/groq.ts`), key stored server-side only (live `process.env` read).
+- `POST /quizzes/generate`: extract text from a material (PDF parsing lib + notes; PPTX unsupported), prompt Groq with strict JSON-schema instructions, validate/parse response (with alias normalization), return draft questions for lecturer review — **never auto-publish AI-generated questions without lecturer confirmation**.
+- Mark quiz `ai_generated = true` for transparency (create + update).
+- Rate-limited (`express-rate-limit`, 6/min default). Verified end-to-end with a real Groq call.
 
-## Phase 6 — Performance Tracking
-- `performance_snapshots` table.
-- Computation job: GPA (from graded assignments + quizzes, weighted per course credit units), per-course averages, trend vs previous snapshot.
-- Rule-based risk scoring function (see `workflows.md` for the exact formula) — pure application logic, unit-testable, no AI involved.
-- Endpoints: `/performance/me`, `/performance/me/risk`, `/performance/course/:id`, `/admin/performance/at-risk`.
-- Snapshot generation triggered: (a) weekly cron, (b) on-demand recompute after a grade is finalized for that student.
+## Phase 6 — Performance Tracking — ✅ DONE
+- `performance_snapshots` table (in `001_init.sql`).
+- Computation job: GPA (graded assignments + quiz attempts), per-course averages, decline vs previous snapshot.
+- Rule-based risk scoring function (see `workflows.md` for the exact formula) — pure application logic (`risk.ts`), unit-testable, no AI involved.
+- Endpoints: `/performance/me`, `/performance/me/risk`, `/performance/courses/:id` (note plural), `/admin/performance/at-risk`, plus `/admin/performance/recompute-snapshots`.
+- Snapshot generation triggered: (a) weekly cron, (b) on-demand recompute after a grade is finalized for that student (also on quiz submit). Advisory-locked upsert prevents duplicate rows.
 
 ## Phase 7 — Notifications & Cron Jobs
 - `notifications`, `notifications_sent`, `announcements` tables.

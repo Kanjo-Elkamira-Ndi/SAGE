@@ -73,6 +73,8 @@ risk_level =
 
 - This computation is pure code (or SQL), unit-tested, and stored in `performance_snapshots`. It must be reproducible and explainable — if a lecturer asks "why is this student flagged," the answer should be a breakdown of the four factors above, not "the model decided."
 
+**Implementation status:** implemented in `api/src/modules/performance/risk.ts` (weights/thresholds as `RISK_WEIGHTS`/`RISK_THRESHOLDS` constants, pure + unit-tested). Snapshots are recomputed best-effort whenever a grade or quiz attempt is finalized, and weekly via cron (`0 2 * * 0`). `/admin/performance/at-risk` defaults to `minScore = 0.33` (medium+) so the report lists only actionable students. Risk is *decline vs the previous snapshot*, so a student who maintains steady (even low) performance has a low score until a drop appears.
+
 **AI step (narration only, strictly downstream of the score):**
 
 1. Once `risk_level`/`risk_score` and the underlying factor breakdown exist for a student, the API may call Groq with that structured data to generate a short, encouraging, plain-language explanation and study suggestion.

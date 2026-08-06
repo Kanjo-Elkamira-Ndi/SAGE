@@ -9,6 +9,8 @@ Execution plan for the Express API in `api/`. Build order mirrors `backend-roadm
 - **Phase 2 (Courses, Enrollment, Materials) — complete & verified:** courses + materials modules implemented against local Postgres and live Supabase Storage (signed upload/download), 38 vitest tests green, full curl lifecycle (create course → enroll → signed upload → finalize → version bump → download, plus RBAC denials) verified end-to-end. Details in the Phase 2 section below.
 - **Phase 3 (Assignments, Exams, Submissions) — complete & verified:** assignments + submissions + exams modules implemented, 62 vitest tests green, full curl lifecycle (create → signed upload → finalize → resubmit/history → grade + `feedback` notification; deadline enforcement incl. late-allowed vs `DEADLINE_PASSED`; exam CRUD; cross-lecturer `NOT_COURSE_OWNER` denials; submission download) verified end-to-end. Details in the Phase 3 section below.
 - **Phase 4 (Quizzes) — complete & verified:** quizzes module with server-side auto-grading implemented, 62 vitest tests green, full curl lifecycle (create MCQ + true/false → start returns question IDs without answers → submit scored 3/3 and 0/5 correctly → results breakdown; window checks `QUIZ_NOT_AVAILABLE`/`QUIZ_CLOSED`; single-attempt `QUIZ_ALREADY_ATTEMPTED`; RBAC denials) verified end-to-end. Details in the Phase 4 section below.
+- **Phase 5 (Groq AI Quiz Generation) — complete & verified:** `POST /quizzes/generate` implemented (text extraction from notes/PDF materials, strict JSON-schema prompting + zod validation with alias normalization, draft-only — never auto-publishes), `ai_generated` column persisted, rate-limited, 108 vitest tests green, full curl lifecycle incl. a real Groq call verified. Details in the Phase 5 section below.
+- **Phase 6 (Performance Tracking) — complete & verified:** rule-based risk scoring (`risk.ts`, exact `workflows.md` formula, unit-tested), snapshot recompute on grade/quiz triggers (advisory-locked upsert, no duplicates), weekly cron, `/performance/*` + `/admin/performance/*` endpoints, 108 vitest tests green, curl E2E verified. Details in the Phase 6 section below.
 - Design docs are the source of truth: `database-schema.md`, `api-reference.md`, `backend-roadmap.md`, `architecture.md`, `security.md`, `workflows.md`.
 - Frontends are not wired yet: `web/src/lib/apiClient.ts` is empty; the admin console runs on mocks (`web/src/features/admin/data.ts`); `mobile/` has no HTTP layer. No Clerk anywhere — custom JWT auth per `security.md`. The auth API contract already matches the mobile `AuthRepository` / `User.fromApi` shapes and the web auth screens.
 
@@ -157,24 +159,31 @@ Implemented (`src/modules/quizzes/`):
 
 **Gate (verified):** create MCQ + true/false quiz → start (questions without answers) → submit correct answers → score 3/3, per-question `correct:true`; fresh quiz with all-wrong answers → score 0/5, `correct:false` + correct answers revealed; results endpoint shows full breakdown; future-window start 403 `QUIZ_NOT_AVAILABLE`; past-window start 403 `QUIZ_CLOSED`; second start after submit 409 `QUIZ_ALREADY_ATTEMPTED`; student create 403 `FORBIDDEN_ROLE`, lecturer start 403 `FORBIDDEN_ROLE`; `GET /courses/:id/quizzes` lists with `questionCount`. 62 vitest tests green (schema tests for all three modules added).
 
-## Phase 5 — Groq AI Quiz Generation
+## Phase 5 — Groq AI Quiz Generation — ✅ DONE
 
-- `src/lib/groq.ts` — single wrapper, key server-side only.
-- `POST /quizzes/generate` — extract text from a material (PDF parsing lib), prompt Groq with strict JSON-schema instructions, validate/parse with zod, return **draft questions for lecturer review**. Never auto-publish; publish only via `PATCH /quizzes/:id` after explicit approval, set `ai_generated = true`.
-- Rate-limit this endpoint (Groq calls cost money).
+Implemented (`src/lib/groq.ts`, `src/lib/material-text.ts`, `src/modules/quizzes/`):
 
-**Needs from user:** Groq API key.
-**Gate:** generate → review → edit → publish flow; malformed AI output is rejected/retried, never shown raw.
+- **Groq client** (`src/lib/groq.ts`): thin `groqChat()` wrapper (base URL `https://api.groq.com/openai/v1`). API key read live from `process.env.GROQ_API_KEY` — never leaves the server; throws `GROQ_UNAVAILABLE` 503 when unset, 502 on Groq API failure. `GROQ_QUIZ_SYSTEM_PROMPT` enforces a strict JSON schema. Model default `openai/gpt-oss-20b` (native schema adherence); `GROQ_MAX_TOKENS` / `GROQ_TEMPERATURE` configurable via env.
+- **Text extraction** (`src/lib/material-text.ts`): `extractTextFromMaterial(type, bytes)` — `notes` decoded as UTF-8, `pdf` parsed via `pdf-parse` (v1.1.1, saved as an optional dep), `pptx` returns `MATERIAL_TYPE_UNSUPPORTED`. `truncateText()` caps LLM context at `MAX_MATERIAL_TEXT_CHARS` (default 15000). Raw bytes fetched server-side via new `storage.downloadObjectBytes()` (signed download URL → fetch).
+- **Generation endpoint** `POST /quizzes/generate` (lecturer, ownership-checked): resolves material by `materialId` or the latest current material in the course, extracts + truncates text, prompts Groq in `json_object` mode, then **validates the draft with zod** before returning. A retry loop (2 attempts) feeds the schema errors back to the model. `normalizeGroqDraft()` maps common LLM key aliases (`question`/`answer` → `questionText`/`correctAnswer`, infers `mcq`/`true_false` from options presence, resolves numeric answer indexes, defaults `points`) so the endpoint is robust across models. Invalid output → `AI_OUTPUT_INVALID` 502 — never shown raw.
+- **Draft-only, never auto-publish:** returns `{ questions, source: { materialId, materialTitle, materialType, textChars }, aiGenerated: true, note }` and saves nothing. Lecturers publish via `POST /quizzes` / `PATCH /quizzes/:id` with `aiGenerated: true` (new column on `quizzes`, persisted in create + update).
+- **Rate limiting:** `express-rate-limit` on the route (60s window, `QUIZ_GENERATE_MAX_PER_MINUTE` default 6) → 429 `TOO_MANY_REQUESTS`.
 
-## Phase 6 — Performance Tracking
+**Gate (verified):** real Groq call via curl — create course → signed notes-material upload → finalize → `POST /quizzes/generate` returned 5 validated questions (`source.materialType: "notes"`, `aiGenerated: true`); published via `POST /quizzes` with `aiGenerated:true` (flag persisted); `PATCH` preserved it; student start/submit worked; RBAC denials (student cannot generate); 429 observed after 7 rapid calls. Groq key lives in local `api/.env` (git-ignored).
 
-- `performance_snapshots` table (already in `001_init.sql`).
-- Pure, unit-tested risk module implementing the `workflows.md` formula (weighted GPA trend, missed-submission rate, quiz decline, engagement; thresholds 0.66/0.33). **Vitest unit tests.**
-- Snapshot triggers: weekly cron + on-demand recompute after a grade is finalized.
-- Endpoints: `GET /performance/me`, `GET /performance/me/risk`, `GET /performance/course/:id` (lecturer), `GET /admin/performance/at-risk` (admin/lecturer).
-- AI narration of risk (plain-language explanation) is **display-only**, never written back into scores.
+## Phase 6 — Performance Tracking — ✅ DONE
 
-**Gate:** risk-score unit tests pass; snapshot diff gives a clean current-vs-previous comparison.
+Implemented (`src/modules/performance/`):
+
+- **Pure risk module** (`risk.ts`): `computeRiskScore` / `riskLevelFromScore` / `explainRisk` implementing the exact `workflows.md` formula — `0.35·gpaDecline + 0.25·missedSubmissionRate + 0.25·quizDecline + 0.15·lowEngagement`, thresholds high ≥ 0.66 / medium ≥ 0.33 — as `RISK_WEIGHTS` / `RISK_THRESHOLDS` constants. Fully unit-tested (`risk.test.ts`).
+- **Service** (`performance.service.ts`): `computeStudentMetrics` (GPA = average scored % across graded assignments + quiz attempts; per-course aggregates incl. `missedSubmissionRate`), `buildRiskFactors` (decline vs the previous snapshot), snapshot lifecycle — `recomputeOne` recomputes the overall + course snapshot for a student in one transaction and upserts via **DELETE+INSERT keyed on `(student_id, course_id, snapshot_date)` guarded by a Postgres advisory lock**, so concurrent grade/quiz triggers cannot create duplicate rows. Triggers: `recomputeStudentSnapshotsForGrade` fire-and-forget (`void`) from `assignments.gradeSubmission` and `quizzes.submitAttempt`; best-effort, failures logged as `performance.snapshot.recompute_failed`.
+- **Endpoints:** `GET /performance/me` (student — overall snapshot + metrics), `GET /performance/me/risk` (student — factor breakdown, score, level, last snapshot date), `GET /performance/courses/:id` (lecturer — course averages + per-student rows with risk), `GET /admin/performance/at-risk` (admin — latest overall snapshot per student; default `minScore` = the medium threshold 0.33 so the report only surfaces actionable students; `?minScore=` / `?level=` overrides), `POST /admin/performance/recompute-snapshots` (admin — one-off full or per-course recompute).
+- **Weekly cron** (`src/jobs/scheduler.ts`): `node-cron` `0 2 * * 0` (Sunday 02:00) recomputes all snapshots; scheduler disabled in the test env, started from `server.ts`.
+- Plain-language risk narration remains **display-only and downstream** of the score per `workflows.md`; the Groq call for it is deferred to the Phase 7 study-plan job.
+
+**Gate (verified):** curl E2E — AI-generated + published quiz, student submitted (scored), submitted + got an assignment graded 85 → async recompute fired → `/performance/me` showed GPA 60 / assignment 85 / quiz 10; `/performance/me/risk` returned breakdown + level; lecturer `/performance/courses/:id` listed the student with risk; admin `/admin/performance/at-risk` returned the student (risk 0.365 → medium); all RBAC denials 403/401; no duplicate snapshot keys. 108 vitest tests green.
+
+**Deviation from the draft contract:** course-performance route is `/performance/courses/:id` (plural) and at-risk is admin-only (draft said `/performance/course/:id`, `admin/lecturer`) — `api-reference.md` updated to match.
 
 ## Phase 7 — Notifications & Cron
 
@@ -244,13 +253,18 @@ SUPABASE_URL=https://<project-ref>.supabase.co   # used since Phase 2 (Storage)
 SUPABASE_ANON_KEY=<publishable key>              # safe for frontends
 SUPABASE_SERVICE_ROLE_KEY=<secret key>           # server-side ONLY
 SUPABASE_STORAGE_BUCKET=materials
-# GROQ_API_KEY=               # needed Phase 5 (AI)
+GROQ_API_KEY=               # server-side ONLY (Phase 5+); key lives in api/.env, never committed
+GROQ_MODEL=openai/gpt-oss-20b   # default; llama-3.3-70b-versatile works via normalization too
+GROQ_MAX_TOKENS=2048
+GROQ_TEMPERATURE=0.7
+QUIZ_GENERATE_MAX_PER_MINUTE=6
+MAX_MATERIAL_TEXT_CHARS=15000
 ```
 
 ## Milestones
 
 - **M1** = Phases 0–4 (student/lecturer core: auth, courses, materials, assignments/exams, quizzes) — ✅ complete
-- **M2** = Phases 5–7 (AI quiz generation, performance tracking, notifications)
+- **M2** = Phases 5–7 (AI quiz generation, performance tracking, notifications) — Phases 5–6 ✅ complete; Phase 7 next
 - **M3** = Phases 8–9 (admin module + hardening)
 
 ## Post-v1 Backlog

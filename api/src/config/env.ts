@@ -16,6 +16,11 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   SUPABASE_STORAGE_BUCKET: z.string().default('materials'),
   GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL: z.string().default('openai/gpt-oss-20b'),
+  GROQ_MAX_TOKENS: z.coerce.number().int().positive().default(2048),
+  GROQ_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.7),
+  QUIZ_GENERATE_MAX_PER_MINUTE: z.coerce.number().int().positive().default(6),
+  MAX_MATERIAL_TEXT_CHARS: z.coerce.number().int().positive().default(15000),
 });
 
 const parsed = envSchema.safeParse(process.env);

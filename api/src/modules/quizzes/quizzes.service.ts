@@ -1,8 +1,15 @@
 import { pool } from '../../config/db';
 import { logActivity } from '../../lib/activity';
 import { AppError } from '../../lib/errors';
+import { groqChat, GROQ_QUIZ_SYSTEM_PROMPT, type GroqMessageInput } from '../../lib/groq';
+import { env } from '../../config/env';
+import { downloadObjectBytes, type MaterialType } from '../../lib/storage';
+import { extractTextFromMaterial, truncateText } from '../../lib/material-text';
 import { getCourseOrThrow, requireLecturerOwns, requireStudentEnrolled } from '../courses/courses.service';
-import type { CreateQuizInput, QuizQuestionDraft, SubmitQuizInput, UpdateQuizInput } from './quizzes.schema';
+import { getMaterialOrThrow, type MaterialRow } from '../materials/materials.service';
+import { recomputeStudentSnapshotsForGrade } from '../performance/performance.service';
+import type { CreateQuizInput, GenerateQuizInput, GroqDraftResponse, QuizQuestionDraft, SubmitQuizInput, UpdateQuizInput } from './quizzes.schema';
+import { groqDraftResponseSchema } from './quizzes.schema';
 
 export interface QuizRow {
   id: string;
@@ -162,18 +169,19 @@ export async function createQuiz(input: CreateQuizInput, lecturerId: string): Pr
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `INSERT INTO quizzes (course_id, created_by, title, time_limit_minutes, available_from, available_until)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id`,
-      [
-        input.courseId,
-        lecturerId,
-        input.title,
-        input.timeLimitMinutes ?? null,
-        input.availableFrom ?? null,
-        input.availableUntil ?? null,
-      ],
-    );
+       `INSERT INTO quizzes (course_id, created_by, title, time_limit_minutes, available_from, available_until, ai_generated)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id`,
+       [
+         input.courseId,
+         lecturerId,
+         input.title,
+         input.timeLimitMinutes ?? null,
+         input.availableFrom ?? null,
+         input.availableUntil ?? null,
+         input.aiGenerated ?? false,
+       ],
+     );
     quizId = result.rows[0].id;
     await insertQuestions(client, quizId, input.questions);
     await client.query('COMMIT');
@@ -194,6 +202,199 @@ export async function createQuiz(input: CreateQuizInput, lecturerId: string): Pr
   return (await getQuizOrThrow(quizId));
 }
 
+interface GeneratedMaterialSource {
+  materialId: string;
+  materialTitle: string;
+  materialType: MaterialType;
+  textChars: number;
+}
+
+interface GenerateDraftResult {
+  questions: QuizQuestionDraft[];
+  source: GeneratedMaterialSource;
+  aiGenerated: true;
+  note: string;
+}
+
+export async function generateQuizDraft(input: GenerateQuizInput, lecturerId: string): Promise<GenerateDraftResult> {
+  await getCourseOrThrow(input.courseId);
+  await requireLecturerOwns(input.courseId, lecturerId);
+
+  const materialRow = await resolveMaterial(input);
+
+  const bytes = await downloadObjectBytes(materialRow.storageKey);
+  const fullText = await extractTextFromMaterial(materialRow.type, bytes);
+  const text = truncateText(fullText);
+
+  const { questions } = await callAndValidateGroq(text, input.numQuestions);
+
+  return {
+    questions,
+    source: {
+      materialId: materialRow.id,
+      materialTitle: materialRow.title,
+      materialType: materialRow.type,
+      textChars: text.length,
+    },
+    aiGenerated: true,
+    note: 'Draft questions generated from AI — review and edit before publishing. Nothing has been saved.',
+  };
+}
+
+async function resolveMaterial(input: GenerateQuizInput): Promise<MaterialRow> {
+  if (input.materialId) {
+    const m = await getMaterialOrThrow(input.materialId);
+    if (m.courseId !== input.courseId) {
+      throw new AppError('NOT_COURSE_OWNER', 'The selected material does not belong to this course.', 403);
+    }
+    return m;
+  }
+
+  const result = await pool.query(
+    'SELECT id FROM materials WHERE course_id = $1 AND is_current = true ORDER BY created_at DESC LIMIT 1',
+    [input.courseId],
+  );
+  const id = result.rows[0]?.id as string | undefined;
+  if (!id) {
+    throw new AppError('MATERIAL_NOT_FOUND', 'No current material is available in this course to build a quiz from.', 404);
+  }
+  return getMaterialOrThrow(id);
+}
+
+async function callAndValidateGroq(text: string, count: number): Promise<{ questions: QuizQuestionDraft[]; validation: { attempts: number } }> {
+  const messages: GroqMessageInput[] = [
+    { role: 'developer', content: GROQ_QUIZ_SYSTEM_PROMPT },
+    {
+      role: 'user' as const,
+      content: `Generate exactly ${count} quiz questions based ONLY on the material text below. Output valid JSON matching the schema in your instructions.
+
+--- MATERIAL TEXT ---
+${text}
+--- END MATERIAL TEXT ---`,
+    },
+  ];
+
+  let lastError: { message: string } | null = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const response = await groqChat(messages, {
+      responseFormat: { type: 'json_object' },
+      temperature: 0.4,
+      maxTokens: env.GROQ_MAX_TOKENS,
+    });
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(response.text);
+    } catch {
+      lastError = { message: `Groq response was not valid JSON (attempt ${attempt}).` };
+      if (attempt === 1) {
+        messages.push({
+          role: 'assistant' as const,
+          content: response.text,
+        });
+        messages.push({
+          role: 'user' as const,
+          content: 'That output was not valid JSON. Please re-output a SINGLE valid JSON object with a "questions" array, and nothing else.',
+        });
+        continue;
+      }
+      throw new AppError('AI_OUTPUT_INVALID', lastError.message, 502, { response });
+    }
+
+    // Some models (e.g. Llama's JSON mode) rename keys. Normalize common
+    // aliases before strict validation so the feature works across models.
+    const normalized = normalizeGroqDraft(parsed);
+
+    const checked = groqDraftResponseSchema.safeParse(normalized);
+    const result: { success: boolean; data?: GroqDraftResponse; error?: unknown } = checked.success
+      ? { success: true, data: checked.data }
+      : { success: false, error: checked.error?.flatten() };
+
+    if (result.success && result.data) {
+      return { questions: result.data.questions, validation: { attempts: attempt } };
+    }
+    lastError = { message: `Generated questions failed shape validation (attempt ${attempt}).` };
+    if (attempt === 1) {
+      messages.push({
+        role: 'assistant' as const,
+        content: response.text,
+      });
+      messages.push({
+        role: 'user' as const,
+        content: `The JSON did not match the required schema. Fix every issue and re-output a valid JSON object with a "questions" array. Schema errors: ${JSON.stringify(result.error)}.`,
+      });
+      continue;
+    }
+    throw new AppError('AI_OUTPUT_INVALID', lastError.message, 502, { validationError: result.error });
+  }
+
+  throw new AppError('AI_OUTPUT_INVALID', lastError?.message ?? 'Groq output could not be validated.', 502);
+}
+
+/**
+ * Maps common LLM key aliases onto the strict draft schema so a broad range of
+ * models can be used. Leaves unrecognised shapes untouched so strict validation
+ * still runs (and the retry loop can request corrections).
+ */
+export function normalizeGroqDraft(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const obj = raw as Record<string, unknown>;
+  if (!Array.isArray(obj.questions)) return raw;
+
+  return {
+    questions: obj.questions.map((q) => {
+      if (!q || typeof q !== 'object' || Array.isArray(q)) return q;
+      const question = q as Record<string, unknown>;
+
+      const questionText = str(question.questionText ?? question.question ?? question.prompt ?? question.text ?? question.stem);
+      const rawType = str(question.questionType ?? question.type ?? question.qtype).toLowerCase();
+      const options = toOptions(question.options ?? question.choices ?? question.choice);
+      const isTrueFalse =
+        rawType === 'true_false' || rawType === 'boolean' || rawType === 'tf';
+      const type: 'mcq' | 'true_false' = isTrueFalse ? 'true_false' : options.length > 0 ? 'mcq' : 'true_false';
+
+      const correctAnswer = resolveCorrectAnswer(question, options);
+
+      const normalized: Record<string, unknown> = {
+        questionText,
+        questionType: type,
+        points: toInt(question.points ?? question.score, 1),
+      };
+      if (type === 'mcq') normalized.options = options;
+      normalized.correctAnswer = correctAnswer;
+      return normalized;
+    }),
+  };
+}
+
+function str(value: unknown): string {
+  return value == null ? '' : String(value).trim();
+}
+
+function toInt(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 1 && n <= 20 ? Math.round(n) : fallback;
+}
+
+function toOptions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((o) => (typeof o === 'string' ? o.trim() : o && typeof o === 'object' && 'text' in o ? str(o.text) : str(o)))
+    .filter((o) => o.length > 0);
+}
+
+function resolveCorrectAnswer(question: Record<string, unknown>, options: string[]): string {
+  const raw = question.correctAnswer ?? question.answer ?? question.correct ?? question.answerKey;
+  if (typeof raw === 'number' && options[raw] !== undefined) return options[raw];
+  if (typeof raw === 'number' && options.length > 0) return options[Math.min(raw, options.length - 1)];
+  const s = str(raw);
+  if (options.length > 0 && /^\d+$/.test(s)) {
+    const idx = Number(s);
+    if (options[idx] !== undefined) return options[idx];
+  }
+  return s;
+}
+
 export async function updateQuiz(
   quizId: string,
   input: UpdateQuizInput,
@@ -208,6 +409,7 @@ export async function updateQuiz(
     time_limit_minutes: input.timeLimitMinutes,
     available_from: input.availableFrom,
     available_until: input.availableUntil,
+    ai_generated: input.aiGenerated,
   }).filter(([, value]) => value !== undefined) as [string, unknown][];
 
   const client = await pool.connect();
@@ -409,6 +611,7 @@ export async function submitAttempt(
     entityId: quizId,
     metadata: { attemptId: attempt.id, score, total, correctCount },
   });
+  void recomputeStudentSnapshotsForGrade(studentId, quiz.courseId);
 
   return {
     attemptId: attempt.id,

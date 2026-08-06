@@ -6,6 +6,8 @@ import { materialRoutes } from './modules/materials/materials.routes';
 import { assignmentRoutes, submissionRoutes } from './modules/assignments/assignments.routes';
 import { examRoutes } from './modules/exams/exams.routes';
 import { quizRoutes } from './modules/quizzes/quizzes.routes';
+import { performanceRoutes } from './modules/performance/performance.routes';
+import { adminPerformanceRoutes } from './modules/performance/admin-performance.routes';
 
 export const apiRouter = Router();
 
@@ -23,3 +25,6 @@ apiRouter.use('/submissions', submissionRoutes);
 apiRouter.use('/exams', examRoutes);
 apiRouter.use('/quizzes', quizRoutes);
 apiRouter.use('/admin/courses', adminCourseRoutes);
+apiRouter.use('/performance', performanceRoutes);
+apiRouter.use('/admin/performance', adminPerformanceRoutes);
+
