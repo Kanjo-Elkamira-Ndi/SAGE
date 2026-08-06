@@ -1,10 +1,68 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Page;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:mobile/app/app.dart';
 import 'package:mobile/app/theme/sage_colors.dart';
+import 'package:mobile/core/pagination.dart';
+import 'package:mobile/data/models/api/course.dart';
+import 'package:mobile/data/models/api/notification.dart';
+import 'package:mobile/data/models/api/performance.dart';
 import 'package:mobile/data/models/user.dart';
+import 'package:mobile/data/repositories/mock/mock_auth_repository.dart';
+import 'package:mobile/features/auth/auth_controller.dart';
+import 'package:mobile/features/student/student_controller.dart';
+
+/// Deterministic API-backed fixtures so the student screens render offline.
+/// `authRepositoryProvider` stays on the mock so sign-in needs no backend; the
+/// course/notification/performance providers are stubbed so the async pages
+/// render real content instead of hitting the network.
+final _apiCourse = ApiCourse(
+  id: 'cs402',
+  code: 'CS-402',
+  title: 'Advanced Algorithms & Data Structures',
+  lecturerName: 'Dr. Elizabeth Thorne',
+  semester: 'Fall 2026',
+  creditUnits: 3,
+  enrolledCount: 84,
+);
+
+final _apiNotification = ApiNotification(
+  id: 'n1',
+  type: 'announcement',
+  title: 'New course materials',
+  body: 'Module 2 notes are up.',
+  isRead: false,
+  createdAt: DateTime.now().subtract(const Duration(hours: 1)),
+);
+
+/// Pumps the app with the offline overrides (no platform plugins, no network).
+Future<void> pumpApp(WidgetTester tester) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        authRepositoryProvider.overrideWithValue(MockAuthRepository()),
+        apiCoursesProvider.overrideWith(
+          (ref) async => Page(items: [_apiCourse], total: 1),
+        ),
+        apiNotificationsProvider.overrideWith(
+          (ref) async =>
+              Page(items: [_apiNotification], total: 1, unread: 1),
+        ),
+        apiPerformanceProvider.overrideWith(
+          (ref) async => ApiStudentPerformance(
+            metrics: ApiPerformanceMetrics(
+              avgAssignmentPct: 87,
+              missedSubmissionRate: 8,
+              byCourse: const [],
+            ),
+          ),
+        ),
+      ],
+      child: const SageApp(),
+    ),
+  );
+}
 
 /// Advances the fake clock far enough for the splash's 3s progress + 3.4s
 /// auto-navigation to fire, then pumps one more frame for the route swap.
@@ -62,7 +120,7 @@ void main() {
 
   testWidgets('app boots to the branded splash then advances to onboarding',
       (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await pumpApp(tester);
     await tester.pump();
 
     expect(find.text('SAGE'), findsOneWidget);
@@ -77,7 +135,7 @@ void main() {
 
   testWidgets('onboarding flows through all pages and into the auth gate',
       (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await pumpApp(tester);
     await tester.pump();
 
     await passSplash(tester);
@@ -103,7 +161,7 @@ void main() {
 
   testWidgets('signing in as student lands on the student shell',
       (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await pumpApp(tester);
     await tester.pump();
 
     await signInAsStudent(tester);
@@ -113,11 +171,11 @@ void main() {
     expect(find.text('Dashboard'), findsOneWidget);
     expect(find.text('Courses'), findsWidgets);
     expect(find.text('Active Courses'), findsOneWidget);
-    expect(find.text('Schedule Preview'), findsOneWidget);
+    expect(find.text('Continue Learning'), findsOneWidget);
   });
 
   testWidgets('invalid credentials surface the auth error', (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await pumpApp(tester);
     await tester.pump();
 
     await reachAuthGate(tester);
@@ -139,7 +197,7 @@ void main() {
 
   testWidgets('registering routes back to login after account creation',
       (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await pumpApp(tester);
     await tester.pump();
 
     await reachAuthGate(tester);
@@ -174,7 +232,7 @@ void main() {
 
   testWidgets('forgot password leads to the check-email state',
       (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await pumpApp(tester);
     await tester.pump();
 
     await reachAuthGate(tester);
@@ -200,7 +258,7 @@ void main() {
 
   testWidgets('student can browse courses and open a course detail',
       (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await pumpApp(tester);
     await tester.pump();
 
     await signInAsStudent(tester);
@@ -230,7 +288,7 @@ void main() {
 
   testWidgets('student tasks tab lists assignments with upload actions',
       (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: SageApp()));
+    await pumpApp(tester);
     await tester.pump();
 
     await signInAsStudent(tester);

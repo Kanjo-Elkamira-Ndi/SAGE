@@ -92,4 +92,17 @@ class MockAuthRepository implements AuthRepository {
   Future<void> signOut() async {
     _session = null;
   }
+
+  @override
+  Future<void> forgotPassword({required String email}) async {
+    // Demo: nothing to send.
+  }
+
+  @override
+  Future<void> resetPassword({
+    required String token,
+    required String newPassword,
+  }) async {
+    // Demo: nothing to verify.
+  }
 }

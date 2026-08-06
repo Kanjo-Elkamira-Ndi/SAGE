@@ -23,6 +23,15 @@ abstract interface class AuthRepository {
 
   /// Ends the session and revokes tokens.
   Future<void> signOut();
+
+  /// Requests a password-reset link/email. Always succeeds (no enumeration).
+  Future<void> forgotPassword({required String email});
+
+  /// Applies a password reset with the token from the emailed link.
+  Future<void> resetPassword({
+    required String token,
+    required String newPassword,
+  });
 }
 
 /// Typed failure for auth flows; maps `AUTH_INVALID_CREDENTIALS` etc.

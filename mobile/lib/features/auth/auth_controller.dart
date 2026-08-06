@@ -1,13 +1,18 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/app_providers.dart';
 import '../../data/models/user.dart';
+import '../../data/repositories/api/api_auth_repository.dart';
 import '../../data/repositories/auth_repository.dart';
-import '../../data/repositories/mock/mock_auth_repository.dart';
 
-/// The repository binding — the single swap point when the Express API lands
-/// (Phase 6). Nothing above this line knows or cares which impl is bound.
+/// The repository binding — the single swap point. Bound to the real Express
+/// API (Phase 6, `api-wiring-plan.md` §A.1). Revert to `MockAuthRepository`
+/// when working without a backend.
 final authRepositoryProvider = Provider<AuthRepository>(
-  (ref) => MockAuthRepository(),
+  (ref) => ApiAuthRepository(
+    client: ref.watch(apiClientProvider),
+    storage: ref.watch(authStorageProvider),
+  ),
 );
 
 enum AuthStatus { restoring, unauthenticated, authenticated }

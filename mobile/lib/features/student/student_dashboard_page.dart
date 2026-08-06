@@ -3,9 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/sage_colors.dart';
-import '../../data/models/student.dart';
 import '../../shared/widgets/sage_card.dart';
-import '../../shared/widgets/sage_progress_bar.dart';
 import '../auth/auth_controller.dart';
 import 'student_colors.dart';
 import 'student_controller.dart';
@@ -13,7 +11,9 @@ import 'student_scaffold.dart';
 import 'student_widgets.dart';
 
 /// Student dashboard — mirrors the SAGE Stitch home screen: greeting, KPI
-/// stats, schedule preview, continue-learning, and announcements.
+/// stats, continue-learning, and announcements. Wired to the API
+/// (`api-wiring-plan.md` §A.2): `GET /courses`, `GET /notifications`,
+/// `GET /performance/me`.
 class StudentDashboardPage extends ConsumerWidget {
   const StudentDashboardPage({super.key});
 
@@ -24,19 +24,36 @@ class StudentDashboardPage extends ConsumerWidget {
     return 'Good evening';
   }
 
+  static const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  String _dateLabel(DateTime d) =>
+      '${_weekdays[d.weekday - 1]}, ${d.day} ${_months[d.month - 1]}';
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authControllerProvider).user;
-    final controller = ref.watch(studentControllerProvider.notifier);
-    final courses = controller.courses;
-    final assignments = controller.assignments;
+    final coursesAsync = ref.watch(apiCoursesProvider);
+    final notificationsAsync = ref.watch(apiNotificationsProvider);
+    final performanceAsync = ref.watch(apiPerformanceProvider);
 
     final firstName = user?.fullName.split(' ').first ?? 'there';
-    final now = DateTime.now();
-    final schedule = <({String time, String label})>[
-      (time: 'Tue 10:00', label: 'CS-402 · Lecture'),
-      (time: 'Tue 12:00', label: 'MTH301 · Tutorial'),
-    ];
+
+    final courses = coursesAsync.value?.items ?? const [];
+    final metrics = performanceAsync.value?.metrics;
+    final dueTasks = metrics?.byCourse.fold<int>(
+          0,
+          (sum, c) => sum + (c.assignmentCount - c.submittedCount),
+        ) ??
+        0;
+
+    final announcements = (notificationsAsync.value?.items ?? const [])
+        .where((n) => n.category == 'announcement' || n.category == 'deadline')
+        .take(2)
+        .toList();
 
     return StudentPageScaffold(
       child: ListView(
@@ -50,7 +67,7 @@ class StudentDashboardPage extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${_greeting(now)}, $firstName!',
+                      '${_greeting(DateTime.now())}, $firstName!',
                       style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w700,
@@ -76,9 +93,9 @@ class StudentDashboardPage extends ConsumerWidget {
                   color: StudentColors.surfaceContainer,
                   borderRadius: BorderRadius.circular(999),
                 ),
-                child: const Text(
-                  'Sat, 1 Aug',
-                  style: TextStyle(
+                child: Text(
+                  _dateLabel(DateTime.now()),
+                  style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: StudentColors.onSurfaceVariant,
@@ -89,30 +106,10 @@ class StudentDashboardPage extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
 
-          // MVP callout
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: StudentColors.secondaryContainer,
-              borderRadius: BorderRadius.circular(12),
+          if (coursesAsync.hasError)
+            _InlineError(
+              onRetry: () => ref.invalidate(apiCoursesProvider),
             ),
-            child: const Row(
-              children: [
-                Icon(Icons.info_outline, size: 20, color: StudentColors.onSecondaryContainer),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'In this demo: dashboard stats preview only \u2014 no backend yet.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: StudentColors.onSecondaryContainer,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
           const SizedBox(height: 20),
 
           // KPI stats
@@ -120,13 +117,16 @@ class StudentDashboardPage extends ConsumerWidget {
             children: [
               Expanded(
                 child: StudentMiniStat(
-                  value: '${courses.length}',
+                  value: '${coursesAsync.value?.total ?? courses.length}',
                   label: 'Active Courses',
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: StudentMiniStat(value: '87%', label: 'Avg. Score'),
+                child: StudentMiniStat(
+                  value: metrics != null ? '${metrics.avgAssignmentPct}%' : '—',
+                  label: 'Avg. Score',
+                ),
               ),
             ],
           ),
@@ -135,86 +135,21 @@ class StudentDashboardPage extends ConsumerWidget {
             children: [
               Expanded(
                 child: StudentMiniStat(
-                  value:
-                      '${assignments.where((a) => a.status != AssignmentStatus.graded && a.status != AssignmentStatus.submitted).length}',
+                  value: metrics != null ? '$dueTasks' : '—',
                   label: 'Tasks Due',
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: StudentMiniStat(value: '92%', label: 'Attendance'),
+                child: StudentMiniStat(
+                  value:
+                      metrics != null ? '${metrics.missedSubmissionRate}%' : '—',
+                  label: 'Missed',
+                ),
               ),
             ],
           ),
           const SizedBox(height: 20),
-
-          // Schedule preview
-          SageCard(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const StudentSectionHeader(
-                  title: 'Schedule Preview',
-                  trailing: 'Show My Schedule',
-                ),
-                const SizedBox(height: 4),
-                if (schedule.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text(
-                      'No classes today \u2014 enjoy the break!',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: StudentColors.onSurfaceVariant,
-                      ),
-                    ),
-                  )
-                else
-                  for (final item in schedule)
-                    Container(
-                      margin: const EdgeInsets.only(top: 10),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: StudentColors.surfaceLow,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: StudentColors.primary,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              item.label,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: StudentColors.primary,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            item.time,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: StudentColors.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
 
           // Continue learning
           SageCard(
@@ -222,51 +157,79 @@ class StudentDashboardPage extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const StudentSectionHeader(title: 'Continue Learning'),
+                const StudentSectionHeader(
+                  title: 'Continue Learning',
+                  trailing: 'My Courses',
+                ),
                 const SizedBox(height: 8),
-                for (final course in courses.take(3)) ...[
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                course.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.textPrimary,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              SageProgressBar(
-                                value: course.progress,
-                                height: 6,
-                                showPercent: false,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          '${(course.progress * 100).round()}%',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: StudentColors.primary,
-                          ),
-                        ),
-                      ],
+                if (coursesAsync.isLoading)
+                  for (var i = 0; i < 3; i++) ...[
+                    const StudentSkeletonBlock(height: 14),
+                    const SizedBox(height: 14),
+                  ]
+                else if (courses.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text(
+                      'Enroll in a course to get started.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: StudentColors.onSurfaceVariant,
+                      ),
                     ),
-                  ),
-                  if (course != courses.take(3).last)
-                    const Divider(height: 1),
-                ],
+                  )
+                else
+                  for (final course in courses.take(3)) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        course.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.textPrimary,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${course.code} · ${course.lecturerName}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: StudentColors.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            '${course.enrolledCount} enrolled',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: StudentColors.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (course != courses.take(3).last)
+                      const Divider(height: 1),
+                  ],
               ],
             ),
           ),
@@ -278,23 +241,42 @@ class StudentDashboardPage extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const StudentSectionHeader(title: 'Announcements'),
+                const StudentSectionHeader(
+                  title: 'Announcements',
+                  trailing: 'See All',
+                ),
                 const SizedBox(height: 8),
-                _AnnouncementRow(
-                  icon: Icons.campaign_outlined,
-                  accent: StudentColors.primary,
-                  title: 'Quiz reminder: CS402',
-                  time: '1h ago',
-                  body: 'Quiz 1: Algorithm Fundamentals closes in 2 hours.',
-                ),
-                const Divider(height: 20),
-                _AnnouncementRow(
-                  icon: Icons.assignment_outlined,
-                  accent: StudentColors.academicGold,
-                  title: 'New assignment in MTH301',
-                  time: '25m ago',
-                  body: 'Problem Set 2 is now available.',
-                ),
+                if (notificationsAsync.isLoading)
+                  for (var i = 0; i < 2; i++) ...[
+                    const StudentSkeletonBlock(height: 44),
+                    const SizedBox(height: 16),
+                  ]
+                else if (announcements.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text(
+                      'Nothing new right now.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: StudentColors.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                else
+                  for (final item in announcements) ...[
+                    _AnnouncementRow(
+                      icon: item.category == 'deadline'
+                          ? Icons.schedule
+                          : Icons.campaign_outlined,
+                      accent: item.category == 'deadline'
+                          ? StudentColors.academicGold
+                          : StudentColors.primary,
+                      title: item.title,
+                      time: item.timeLabel,
+                      body: item.body ?? '',
+                    ),
+                    if (item != announcements.last) const Divider(height: 20),
+                  ],
               ],
             ),
           ),
@@ -321,6 +303,39 @@ class StudentDashboardPage extends ConsumerWidget {
                 onTap: () => context.go('/student/analytics'),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.dangerSubtle,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_outlined, size: 18, color: AppColors.danger),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Could not refresh your courses.',
+              style: TextStyle(fontSize: 13, color: AppColors.danger),
+            ),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            child: const Text('Retry'),
           ),
         ],
       ),
@@ -382,15 +397,19 @@ class _AnnouncementRow extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 2),
-              Text(
-                body,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: StudentColors.onSurfaceVariant,
-                  height: 1.4,
+              if (body.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  body,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: StudentColors.onSurfaceVariant,
+                    height: 1.4,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
