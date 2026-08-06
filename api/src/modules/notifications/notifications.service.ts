@@ -19,6 +19,11 @@ export interface NotificationInput {
   relatedEntityId?: string | null;
 }
 
+export interface IdempotentNotificationInput extends NotificationInput {
+  eventType: string;
+  eventRefId: string;
+}
+
 export interface NotificationRow {
   id: string;
   userId: string;
@@ -83,7 +88,7 @@ export async function insertNotification(input: NotificationInput): Promise<Noti
  * transaction; returns false if the event was already sent.
  */
 export async function sendIdempotentNotification(
-  input: NotificationInput & { eventType: string; eventRefId: string },
+  input: IdempotentNotificationInput,
 ): Promise<boolean> {
   const client = await pool.connect();
   try {
@@ -113,6 +118,65 @@ export async function sendIdempotentNotification(
     );
     await client.query('COMMIT');
     return true;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Batch variant of `sendIdempotentNotification` for cron hot paths. Inserts all
+ * guard rows and all newly-sent notifications in a single transaction using
+ * array UNNESTs, so N notifications cost a handful of round trips instead of N
+ * sequential transactions. Returns the number of notifications actually sent
+ * (i.e. guards that were not already present).
+ */
+export async function sendIdempotentNotificationsBatch(
+  inputs: IdempotentNotificationInput[],
+): Promise<number> {
+  if (inputs.length === 0) return 0;
+
+  const userIds = inputs.map((i) => i.userId);
+  const eventTypes = inputs.map((i) => i.eventType);
+  const eventRefIds = inputs.map((i) => i.eventRefId);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const guard = await client.query(
+      `INSERT INTO notifications_sent (user_id, event_type, event_ref_id)
+       SELECT * FROM unnest($1::uuid[], $2::text[], $3::uuid[])
+       ON CONFLICT (user_id, event_type, event_ref_id) DO NOTHING
+       RETURNING event_ref_id`,
+      [userIds, eventTypes, eventRefIds],
+    );
+
+    const newlySent = new Set(guard.rows.map((row) => row.event_ref_id as string));
+    if (newlySent.size === 0) {
+      await client.query('COMMIT');
+      return 0;
+    }
+
+    const toNotify = inputs.filter((i) => newlySent.has(i.eventRefId));
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, body, related_entity_type, related_entity_id)
+       SELECT * FROM unnest(
+         $1::uuid[], $2::text[], $3::text[], $4::text[], $5::text[], $6::uuid[]
+       )`,
+      [
+        toNotify.map((i) => i.userId),
+        toNotify.map((i) => i.type),
+        toNotify.map((i) => i.title),
+        toNotify.map((i) => i.body ?? null),
+        toNotify.map((i) => i.relatedEntityType ?? null),
+        toNotify.map((i) => i.relatedEntityId ?? null),
+      ],
+    );
+
+    await client.query('COMMIT');
+    return newlySent.size;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

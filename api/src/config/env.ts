@@ -22,6 +22,8 @@ const envSchema = z.object({
   QUIZ_GENERATE_MAX_PER_MINUTE: z.coerce.number().int().positive().default(6),
   MAX_MATERIAL_TEXT_CHARS: z.coerce.number().int().positive().default(15000),
   DEADLINE_REMINDER_WINDOWS: z.string().default('48,24,2'),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  atRiskQuerySchema,
   createDepartmentSchema,
   grantPermissionSchema,
   listActivityLogsQuerySchema,
@@ -76,5 +77,18 @@ describe('listActivityLogsQuerySchema', () => {
 describe('grantPermissionSchema', () => {
   it('accepts a permission key', () => {
     expect(grantPermissionSchema.parse({ permission: 'grades:manage' }).permission).toBe('grades:manage');
+  });
+});
+
+describe('atRiskQuerySchema', () => {
+  it('coerces minScore and passes through valid levels', () => {
+    expect(atRiskQuerySchema.parse({ minScore: '0.4' }).minScore).toBe(0.4);
+    expect(atRiskQuerySchema.parse({ level: 'high' }).level).toBe('high');
+  });
+
+  it('rejects an unknown level or out-of-range minScore', () => {
+    expect(() => atRiskQuerySchema.parse({ level: 'critical' })).toThrow();
+    expect(() => atRiskQuerySchema.parse({ minScore: '1.5' })).toThrow();
+    expect(() => atRiskQuerySchema.parse({ minScore: '-0.1' })).toThrow();
   });
 });

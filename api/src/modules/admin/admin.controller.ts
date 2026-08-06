@@ -1,5 +1,4 @@
 import type { Request, Response } from 'express';
-import { AppError } from '../../lib/errors';
 import { paramString } from '../../lib/params';
 import { logActivity } from '../../lib/activity';
 import { validate, parseBody } from '../../middleware/validate';
@@ -13,8 +12,9 @@ import {
   updateDepartmentSchema,
   grantPermissionSchema,
   recomputeSnapshotsSchema,
+  atRiskQuerySchema,
 } from './admin.schema';
-import type { RiskLevel } from '../performance/risk';
+import type { AtRiskQuery } from './admin.schema';
 
 export async function listUsers(req: Request, res: Response): Promise<void> {
   const query = parseBody(listUsersQuerySchema, req.query);
@@ -133,22 +133,14 @@ export async function getDashboardStats(_req: Request, res: Response): Promise<v
 }
 
 export async function getAtRiskReport(req: Request, res: Response): Promise<void> {
-  const level = typeof req.query.level === 'string' ? (req.query.level as RiskLevel) : undefined;
-  const minScore = req.query.minScore !== undefined ? Number(req.query.minScore) : undefined;
-  if (level && !['low', 'medium', 'high'].includes(level)) {
-    throw new AppError('VALIDATION_ERROR', 'level must be low, medium or high', 400);
-  }
-  if (minScore !== undefined && !Number.isFinite(minScore)) {
-    throw new AppError('VALIDATION_ERROR', 'minScore must be a number', 400);
-  }
-  const data = await adminService.getAtRiskReport({ level, minScore });
+  const query = parseBody(atRiskQuerySchema, req.query) as AtRiskQuery;
+  const data = await adminService.getAtRiskReport(query);
   res.json({ success: true, data });
 }
 
 export async function exportAtRiskReport(req: Request, res: Response): Promise<void> {
-  const level = typeof req.query.level === 'string' ? (req.query.level as RiskLevel) : undefined;
-  const minScore = req.query.minScore !== undefined ? Number(req.query.minScore) : undefined;
-  const { csv } = await adminService.getAtRiskReport({ level, minScore });
+  const query = parseBody(atRiskQuerySchema, req.query) as AtRiskQuery;
+  const { csv } = await adminService.getAtRiskReport(query);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="at-risk-students.csv"');
   res.status(200).send(csv);

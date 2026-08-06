@@ -1,7 +1,11 @@
 import { pool } from '../config/db';
 import { env } from '../config/env';
 import { logger } from '../lib/logger';
-import { sendIdempotentNotification, uuidFromString } from '../modules/notifications/notifications.service';
+import {
+  sendIdempotentNotificationsBatch,
+  uuidFromString,
+  type IdempotentNotificationInput,
+} from '../modules/notifications/notifications.service';
 
 export function humanizeHours(hours: number): string {
   if (hours % 24 === 0) {
@@ -62,7 +66,7 @@ export async function runDeadlineReminders(now: Date = new Date()): Promise<{
     );
     candidates += result.rows.length;
 
-    for (const row of result.rows) {
+    const inputs: IdempotentNotificationInput[] = result.rows.map((row) => {
       const candidate: ReminderCandidate = {
         studentId: row.student_id as string,
         assignmentId: row.assignment_id as string,
@@ -70,7 +74,7 @@ export async function runDeadlineReminders(now: Date = new Date()): Promise<{
         courseTitle: row.course_title as string,
         deadlineAt: row.deadline_at as Date,
       };
-      const sentNow = await sendIdempotentNotification({
+      return {
         userId: candidate.studentId,
         type: 'deadline_reminder',
         title: `Assignment due in ${humanizeHours(hours)}: ${candidate.title}`,
@@ -79,9 +83,9 @@ export async function runDeadlineReminders(now: Date = new Date()): Promise<{
         relatedEntityId: candidate.assignmentId,
         eventType: 'deadline_reminder',
         eventRefId: uuidFromString(`${candidate.studentId}:${candidate.assignmentId}:${hours}h`),
-      });
-      if (sentNow) sent += 1;
-    }
+      };
+    });
+    sent += await sendIdempotentNotificationsBatch(inputs);
   }
 
   logger.info('deadline_reminders complete', { windows, candidates, sent });

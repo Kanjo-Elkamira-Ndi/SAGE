@@ -15,3 +15,5 @@ process.env.GROQ_TEMPERATURE = '0.7';
 process.env.QUIZ_GENERATE_MAX_PER_MINUTE = '6';
 process.env.MAX_MATERIAL_TEXT_CHARS = '15000';
 process.env.DEADLINE_REMINDER_WINDOWS = '48,24,2';
+process.env.AUTH_RATE_LIMIT_MAX = '10';
+process.env.AUTH_RATE_LIMIT_WINDOW_MS = '900000';

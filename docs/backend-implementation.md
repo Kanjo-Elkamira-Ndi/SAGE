@@ -213,14 +213,16 @@ Admin console routes all gated by `requireAuth` + `requireRole('admin')`. Respon
 
 **Gate (verified):** E2E — pending lecturer blocked (`USER_PENDING_APPROVAL`), admin activation stamps `activatedAt`, self-deactivation rejected, student→admin endpoints 403 `FORBIDDEN_ROLE`, user list filters, department create/409/update, permission grant/list/revoke, activity-log filters, dashboard stats, at-risk report + CSV export. All 22 vitest files / 146 tests green; `tsc` clean.
 
-## Phase 9 — Hardening
+## Phase 9 — Hardening ✅ DONE
 
-- Rate limiting (`express-rate-limit`) on `/auth/login`, `/auth/register`, `/quizzes/generate` (e.g. 10 req/15 min per IP on auth).
-- Full validation audit — zod schemas on every body, no unchecked inputs.
-- `npm audit` clean; security.md pre-launch checklist verified.
-- Load-check the notification cron against realistic enrollment volume.
+- **Rate limiting** — `src/middleware/rateLimit.ts` exports an `apiRateLimit({ windowMs, max, message })` factory (standard SAGE error shape, 429, disabled in test env) and a prebuilt `authRateLimiter`. Applied to `/auth/login`, `/auth/register`, `/auth/forgot-password`, `/auth/reset-password` (default `AUTH_RATE_LIMIT_MAX=10` / `AUTH_RATE_LIMIT_WINDOW_MS=900000`); the quiz-generation limiter now uses the same factory.
+- **Validation audit** — every mutating endpoint validates its body with Zod before touching the DB; query params are schema-parsed (`parseBody` on query) wherever they carry filters, including the admin at-risk report (`atRiskQuerySchema`). Route params always via `paramString`.
+- **Route dedupe** — deleted `admin-performance.routes.ts`; its `POST /admin/performance/recompute-snapshots` was shadowing the admin module's validated + activity-logged version. Canonical admin endpoints: `/admin/reports/at-risk` (+ `/export`), `/admin/performance/recompute-snapshots`, `/admin/dashboard/stats`, `/admin/activity-logs`.
+- **Cron load check** — the deadline-reminder hot path now uses `sendIdempotentNotificationsBatch` (guards + notifications inserted via `UNNEST` arrays in one transaction). 3,600 notifications: **2.7 s vs ~49 s** serial before; a same-day re-run sends 0 (idempotent). `src/scripts/loadtest-notifications.ts` seeds/measures/cleans up.
+- **Dependency audit** — `npm audit`: api **0 vulnerabilities**; web 2 high (react-router RSC-mode advisory, not applicable to a Vite SPA — no downgrade taken; see `security.md` §10).
+- **security.md §10 pre-launch checklist** reviewed: all items done except confirming the production CORS origin before launch.
 
-**Gate:** `security.md` §10 checklist all green.
+**Gate:** `security.md` §10 pre-launch checklist all green (two documented caveats: production CORS origin value, react-router advisory not applicable to this app). 23 vitest files / 151 tests green.
 
 ---
 
@@ -265,13 +267,15 @@ GROQ_TEMPERATURE=0.7
 QUIZ_GENERATE_MAX_PER_MINUTE=6
 MAX_MATERIAL_TEXT_CHARS=15000
 DEADLINE_REMINDER_WINDOWS=48,24,2   # Phase 7 hourly reminder windows (hours before deadline)
+AUTH_RATE_LIMIT_MAX=10              # Phase 9 auth rate limit (attempts per IP per window)
+AUTH_RATE_LIMIT_WINDOW_MS=900000    # Phase 9 auth rate limit window (ms = 15 min)
 ```
 
 ## Milestones
 
 - **M1** = Phases 0–4 (student/lecturer core: auth, courses, materials, assignments/exams, quizzes) — ✅ complete
 - **M2** = Phases 5–7 (AI quiz generation, performance tracking, notifications) — ✅ complete
-- **M3** = Phases 8–9 (admin module + hardening) — Phase 8 ✅ complete; Phase 9 next
+- **M3** = Phases 8–9 (admin module + hardening) — ✅ complete
 
 ## Post-v1 Backlog
 

@@ -70,11 +70,13 @@ Each phase should end in something testable via Postman/curl before moving to th
 - Permissions table wiring: per-user grant/revoke/list (`permissions`), plus a coarse role→permission map (`middleware/requirePermission.ts`) for future use.
 - All admin routes gated by `requireRole('admin')`.
 
-## Phase 9 — Hardening
-- Rate limiting on auth endpoints.
-- Input validation audit across all endpoints (Zod schemas everywhere, no unchecked bodies).
-- Load-test the notification cron against realistic enrollment volume.
-- Review all endpoints against `security.md` checklist before considering v1 "done."
+## Phase 9 — Hardening ✅ DONE
+- Auth rate limiting: `AUTH_RATE_LIMIT_MAX` (10) per IP per `AUTH_RATE_LIMIT_WINDOW_MS` (15 min) on `/auth/login`, `/auth/register`, `/auth/forgot-password`, `/auth/reset-password`; quiz-generation limiter refactored onto the same shared `apiRateLimit` factory (`src/middleware/rateLimit.ts`). Responds 429 with the standard `{ success, error: { code: TOO_MANY_REQUESTS } }` shape; disabled in the test env.
+- Input-validation audit: every mutating endpoint body has a Zod schema (no unchecked bodies); query params schema-driven where filtered (admin users/activity-logs/at-risk report). Route params go through `paramString`.
+- Route dedupe: removed the redundant `admin-performance.routes.ts` (its `/recompute-snapshots` shadowed the validated + activity-logged admin-module route). Canonical admin surface: `/admin/reports/at-risk`, `/admin/performance/recompute-snapshots`, `/admin/dashboard/stats`, etc.
+- Cron load check: deadline-reminder path batched via `sendIdempotentNotificationsBatch` (array UNNEST + `ON CONFLICT DO NOTHING` in one transaction) — 3,600 notifications in ~2.7 s (was ~49 s serial), idempotent re-runs send 0. `src/scripts/loadtest-notifications.ts` seeds/measures/cleans up.
+- `npm audit`: api 0 vulnerabilities; web: 2 high (react-router RSC-mode advisory — not applicable to the Vite SPA, see `security.md` §10).
+- `security.md` §10 checklist reviewed and marked done (only CORS production-domain + react-router upstream-fix remain action items).
 
 ## Cross-Cutting (apply throughout, not a separate phase)
 - Every mutating endpoint writes an `activity_logs` entry.

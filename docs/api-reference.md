@@ -168,3 +168,4 @@ All responses follow:
 - All list endpoints support `?page=&limit=` pagination, default `limit=20`.
 - All mutating endpoints validate request bodies with a schema library (e.g. Zod) before touching the DB.
 - File-related endpoints never accept raw file bytes through the API — always the signed-URL pattern described in `architecture.md`.
+- Rate limiting: auth endpoints (`/auth/login`, `/auth/register`, `/auth/forgot-password`, `/auth/reset-password`) allow `AUTH_RATE_LIMIT_MAX` requests (default 10) per IP per `AUTH_RATE_LIMIT_WINDOW_MS` (default 15 min); `/quizzes/generate` allows `QUIZ_GENERATE_MAX_PER_MINUTE` (default 6) per minute. Over the limit → `429 TOO_MANY_REQUESTS`.

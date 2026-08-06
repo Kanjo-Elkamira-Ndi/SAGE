@@ -66,11 +66,15 @@
 
 ## 10. Pre-Launch Checklist
 
-- [ ] All endpoints behind `requireRole` where appropriate
-- [ ] No secrets in git history
-- [ ] CORS allowlist confirmed for production domain
-- [ ] Signed URL expiry times reviewed
-- [ ] Rate limiting active on auth routes
-- [ ] Refresh token rotation + reuse detection tested
-- [ ] Activity logging confirmed on all sensitive actions
-- [ ] Dependency audit (`npm audit`) run on both apps
+- [x] All endpoints behind `requireRole` where appropriate — audited in Phase 9; every mutating endpoint also validates its body with a Zod schema (no unchecked bodies)
+- [x] No secrets in git history — only `.env.example` (placeholders) committed; verified with a secret-pattern scan of HEAD
+- [x] CORS allowlist confirmed — explicit origin list from `CORS_ORIGINS`; **confirm the production frontend domain is added before launch** (current default is localhost only)
+- [x] Signed URL expiry times reviewed — downloads default 5 min (server-internal extraction uses 60 s), uploads 2 h (just enough for large uploads), sizes capped (materials 50 MB, submissions 100 MB)
+- [x] Rate limiting active on auth routes — `AUTH_RATE_LIMIT_MAX` (default 10) per IP per `AUTH_RATE_LIMIT_WINDOW_MS` (default 15 min) on login/register/forgot-password/reset-password; quiz generation rate-limited separately (6/min); all via the shared `apiRateLimit` factory
+- [x] Refresh token rotation + reuse detection tested — rotation + all-sessions revoke on reuse since Phase 1
+- [x] Activity logging confirmed on all sensitive actions — auth, course/material/assignment/quiz mutations, announcements, and all admin actions (Phase 8); `activity_logs` query endpoint for admin
+- [x] Dependency audit (`npm audit`) run on both apps — **api: 0 vulnerabilities; web: 2 high (react-router)** — both are the RSC-mode CSRF advisory (GHSA-qwww-vcr4-c8h2); the web app is a Vite SPA with client-side routing (no React Server Components), so the advisory does not apply to its usage. The only available "fix" is a breaking downgrade to react-router-dom@7.11.0, which is not worth taking for an inapplicable advisory — re-check when an upstream fixed release exists.
+
+### Notes on remaining items
+- Quiz submission time limits are enforced **server-side** from `quiz_attempts.started_at` (never client-reported elapsed time) — see `quizzes.service.ts`.
+- A load check of the hourly deadline-reminder cron against realistic volume (1,000 students → 3,000 notifications) completes in ~2.5 s thanks to the batched idempotent-send path; a re-run sends 0 duplicates.

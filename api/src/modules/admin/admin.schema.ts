@@ -58,6 +58,11 @@ export const recomputeSnapshotsSchema = z.object({
   courseId: z.string().uuid('Invalid course').optional(),
 });
 
+export const atRiskQuerySchema = z.object({
+  level: z.enum(['low', 'medium', 'high']).optional(),
+  minScore: z.coerce.number().min(0).max(1).optional(),
+});
+
 export type UserStatusInput = z.infer<typeof userStatusSchema>;
 export type UserRoleInput = z.infer<typeof userRoleSchema>;
 export type CreateDepartmentInput = z.infer<typeof createDepartmentSchema>;
@@ -66,3 +71,4 @@ export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
 export type ListActivityLogsQuery = z.infer<typeof listActivityLogsQuerySchema>;
 export type GrantPermissionInput = z.infer<typeof grantPermissionSchema>;
 export type RecomputeSnapshotsInput = z.infer<typeof recomputeSnapshotsSchema>;
+export type AtRiskQuery = z.infer<typeof atRiskQuerySchema>;
