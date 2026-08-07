@@ -53,6 +53,14 @@ export function sageErrorText(
         return "This account has been deactivated.";
       case "TOO_MANY_REQUESTS":
         return "Too many attempts — try again shortly.";
+      case "EMAIL_TAKEN":
+        return "An account already exists for that email.";
+      case "RESET_TOKEN_INVALID":
+        return "This reset link is invalid. Request a new one.";
+      case "RESET_TOKEN_USED":
+        return "This reset link has already been used.";
+      case "RESET_TOKEN_EXPIRED":
+        return "This reset link has expired.";
       case "FORBIDDEN_ROLE":
         return "You do not have permission to perform this action.";
       case "DEPARTMENT_CODE_TAKEN":

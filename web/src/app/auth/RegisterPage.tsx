@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useReducedMotion, motion } from "framer-motion";
 import {
   User,
@@ -14,19 +14,45 @@ import { AuthSplitScreen } from "@/components/layout/AuthSplitScreen";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { DURATION, EASE } from "@/lib/motion";
-
-const departments = [
-  "Computer Science & Engineering",
-  "Mathematics & Statistics",
-  "Applied Physics",
-  "Humanities & Social Sciences",
-  "Business Administration",
-];
+import { register } from "@/lib/apiClient";
+import { sageErrorText } from "@/lib/queryClient";
 
 export default function RegisterPage() {
+  const navigate = useNavigate();
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [registered, setRegistered] = useState(false);
   const prefersReduced = useReducedMotion();
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await register(fullName.trim(), email.trim(), password);
+      setRegistered(true);
+      if (!result.pendingApproval) {
+        window.setTimeout(() => navigate("/login"), 1500);
+      }
+    } catch (err) {
+      setError(sageErrorText(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <AuthSplitScreen
@@ -57,7 +83,38 @@ export default function RegisterPage() {
           Start your journey with academic excellence.
         </p>
 
-        <form className="space-y-5" onSubmit={(e) => e.preventDefault()}>
+        {registered ? (
+          <div className="rounded-lg border border-success/30 bg-success/10 px-4 py-6 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-success/15">
+              <svg
+                className="h-6 w-6 text-success"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+            </div>
+            <h3 className="mb-1 text-lg font-bold text-text-primary">
+              Account created
+            </h3>
+            <p className="text-sm text-text-secondary">
+              Your account is ready. Redirecting you to log in…
+            </p>
+          </div>
+        ) : (
+        <form className="space-y-5" onSubmit={onSubmit}>
+          {error && (
+            <div className="rounded-lg border border-admin-danger-soft bg-admin-danger-soft/40 px-4 py-3 text-sm font-medium text-danger">
+              {error}
+            </div>
+          )}
+
           {/* Full Name */}
           <div>
             <label
@@ -73,6 +130,9 @@ export default function RegisterPage() {
                 type="text"
                 placeholder="John Doe"
                 className="pl-10"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                disabled={submitting}
               />
             </div>
           </div>
@@ -92,31 +152,11 @@ export default function RegisterPage() {
                 type="email"
                 placeholder="you@university.edu"
                 className="pl-10"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={submitting}
               />
             </div>
-          </div>
-
-          {/* Department */}
-          <div>
-            <label
-              htmlFor="department"
-              className="mb-1.5 block text-sm font-medium text-text-primary"
-            >
-              Department
-            </label>
-            <select
-              id="department"
-              className="flex h-10 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-light focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <option value="" disabled>
-                Select your department
-              </option>
-              {departments.map((dept) => (
-                <option key={dept} value={dept}>
-                  {dept}
-                </option>
-              ))}
-            </select>
           </div>
 
           {/* Password */}
@@ -134,6 +174,9 @@ export default function RegisterPage() {
                 type={showPassword ? "text" : "password"}
                 placeholder="Create a password"
                 className="pl-10 pr-10"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
               />
               <button
                 type="button"
@@ -165,6 +208,9 @@ export default function RegisterPage() {
                 type={showConfirm ? "text" : "password"}
                 placeholder="Confirm your password"
                 className="pl-10 pr-10"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={submitting}
               />
               <button
                 type="button"
@@ -212,13 +258,30 @@ export default function RegisterPage() {
           </div>
 
           {/* Submit */}
-          <Button type="submit" className="w-full" size="lg">
-            Create Account
-            <ArrowRight className="h-4 w-4" />
+          <Button
+            type="submit"
+            className="w-full"
+            size="lg"
+            disabled={submitting}
+          >
+            {submitting ? "Creating account…" : "Create Account"}
+            {!submitting && <ArrowRight className="h-4 w-4" />}
           </Button>
         </form>
+        )}
 
         {/* Login link */}
+        {registered ? (
+          <p className="mt-8 text-center text-sm text-text-secondary">
+            Already have an account?{" "}
+            <Link
+              to="/login"
+              className="font-medium text-primary hover:text-primary-hover"
+            >
+              Log In
+            </Link>
+          </p>
+        ) : (
         <p className="mt-8 text-center text-sm text-text-secondary">
           Already have an account?{" "}
           <Link
@@ -228,6 +291,7 @@ export default function RegisterPage() {
             Log In
           </Link>
         </p>
+        )}
       </motion.div>
     </AuthSplitScreen>
   );

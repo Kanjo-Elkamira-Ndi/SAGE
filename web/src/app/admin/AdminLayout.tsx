@@ -5,10 +5,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Sidebar } from "@/features/admin/components/Sidebar";
 import { Avatar } from "@/components/ui/Avatar";
 import { fadeIn } from "@/lib/motion";
+import { useAuth } from "@/context/AuthContext";
 
 export default function AdminLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
+  const { user } = useAuth();
+  const displayName = user?.fullName ?? "Admin";
+  const roleLabel = user?.role === "admin" ? "Super Administrator" : "Administrator";
 
   return (
     <div className="min-h-screen bg-admin-bg text-text-primary">
@@ -60,13 +64,13 @@ export default function AdminLayout() {
             <div className="flex items-center gap-3">
               <div className="hidden text-right sm:block">
                 <p className="text-sm font-semibold leading-none text-text-primary">
-                  Admin User
+                  {displayName}
                 </p>
                 <p className="mt-1 text-xs leading-none text-admin-text-muted">
-                  Super Administrator
+                  {roleLabel}
                 </p>
               </div>
-              <Avatar name="Admin User" size="md" />
+              <Avatar name={displayName} size="md" />
             </div>
           </div>
         </header>

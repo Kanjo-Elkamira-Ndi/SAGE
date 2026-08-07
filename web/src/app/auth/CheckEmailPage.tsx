@@ -1,12 +1,34 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { useReducedMotion, motion } from "framer-motion";
-import { Mail, RefreshCw, ArrowLeft } from "lucide-react";
+import { Mail, RefreshCw, ArrowLeft, Check } from "lucide-react";
 import { AuthSplitScreen } from "@/components/layout/AuthSplitScreen";
 import { Button } from "@/components/ui/Button";
 import { DURATION, EASE } from "@/lib/motion";
+import { forgotPassword } from "@/lib/apiClient";
+import { sageErrorText } from "@/lib/queryClient";
 
 export default function CheckEmailPage() {
   const prefersReduced = useReducedMotion();
+  const location = useLocation();
+  const email = (location.state as { email?: string } | null)?.email ?? "";
+  const [resending, setResending] = useState(false);
+  const [resent, setResent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onResend = async () => {
+    if (resending || !email) return;
+    setResending(true);
+    setError(null);
+    try {
+      await forgotPassword(email);
+      setResent(true);
+    } catch (err) {
+      setError(sageErrorText(err));
+    } finally {
+      setResending(false);
+    }
+  };
 
   return (
     <AuthSplitScreen
@@ -34,11 +56,30 @@ export default function CheckEmailPage() {
           your inbox and follow the instructions.
         </p>
 
+        {error && (
+          <div className="mb-5 rounded-lg border border-admin-danger-soft bg-admin-danger-soft/40 px-4 py-3 text-sm font-medium text-danger">
+            {error}
+          </div>
+        )}
+
         <div className="space-y-4">
-          <Button variant="secondary" className="w-full" size="lg">
-            <RefreshCw className="h-4 w-4" />
-            Resend email
-          </Button>
+          {resent ? (
+            <div className="flex items-center justify-center gap-2 rounded-lg border border-success/30 bg-success/10 px-4 py-3 text-sm font-medium text-success">
+              <Check className="h-4 w-4" />
+              Reset link sent again. Check your inbox.
+            </div>
+          ) : (
+            <Button
+              variant="secondary"
+              className="w-full"
+              size="lg"
+              onClick={onResend}
+              disabled={resending || !email}
+            >
+              <RefreshCw className="h-4 w-4" />
+              {resending ? "Resending…" : "Resend email"}
+            </Button>
+          )}
 
           <Link
             to="/login"

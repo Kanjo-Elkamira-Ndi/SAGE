@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useReducedMotion, motion, AnimatePresence } from "framer-motion";
 import { Lock, ArrowRight, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { AuthSplitScreen } from "@/components/layout/AuthSplitScreen";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { DURATION, EASE, fadeIn } from "@/lib/motion";
+import { resetPassword } from "@/lib/apiClient";
+import { sageErrorText } from "@/lib/queryClient";
 
 function getStrength(password: string): {
   level: number;
@@ -26,12 +28,52 @@ function getStrength(password: string): {
 }
 
 export default function ResetPasswordPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get("token") ?? "";
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const prefersReduced = useReducedMotion();
   const strength = getStrength(password);
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+
+    if (!token) {
+      navigate("/reset-expired", { replace: true });
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await resetPassword(token, password);
+      setSubmitted(true);
+    } catch (err) {
+      const code = err instanceof Error && "code" in err ? (err as { code?: string }).code : undefined;
+      if (
+        code === "RESET_TOKEN_INVALID" ||
+        code === "RESET_TOKEN_USED" ||
+        code === "RESET_TOKEN_EXPIRED"
+      ) {
+        navigate("/reset-expired", { replace: true });
+        return;
+      }
+      setError(sageErrorText(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <AuthSplitScreen
@@ -64,13 +106,13 @@ export default function ResetPasswordPage() {
                 Please choose a secure new password for your SAGE account.
               </p>
 
-              <form
-                className="space-y-5"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  setSubmitted(true);
-                }}
-              >
+              <form className="space-y-5" onSubmit={onSubmit}>
+                {error && (
+                  <div className="rounded-lg border border-admin-danger-soft bg-admin-danger-soft/40 px-4 py-3 text-sm font-medium text-danger">
+                    {error}
+                  </div>
+                )}
+
                 {/* New Password */}
                 <div>
                   <label
@@ -88,6 +130,7 @@ export default function ResetPasswordPage() {
                       className="pl-10 pr-10"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      disabled={submitting}
                     />
                     <button
                       type="button"
@@ -144,6 +187,9 @@ export default function ResetPasswordPage() {
                       type={showConfirm ? "text" : "password"}
                       placeholder="Confirm new password"
                       className="pl-10 pr-10"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      disabled={submitting}
                     />
                     <button
                       type="button"
@@ -162,9 +208,14 @@ export default function ResetPasswordPage() {
                   </div>
                 </div>
 
-                <Button type="submit" className="w-full" size="lg">
-                  Reset Password
-                  <ArrowRight className="h-4 w-4" />
+                <Button
+                  type="submit"
+                  className="w-full"
+                  size="lg"
+                  disabled={submitting}
+                >
+                  {submitting ? "Resetting…" : "Reset Password"}
+                  {!submitting && <ArrowRight className="h-4 w-4" />}
                 </Button>
               </form>
 

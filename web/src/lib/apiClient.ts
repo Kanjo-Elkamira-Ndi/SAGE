@@ -264,3 +264,49 @@ export async function getMe(): Promise<AuthUserPayload> {
   const data = await apiFetch<{ user: AuthUserPayload }>("/auth/me");
   return data.user;
 }
+
+export interface RegisterResult {
+  user: AuthUserPayload;
+  pendingApproval: boolean;
+  message: string;
+}
+
+/** POST /auth/register — creates an account but does NOT start a session. */
+export async function register(
+  fullName: string,
+  email: string,
+  password: string,
+  role: "student" | "lecturer" = "student",
+): Promise<RegisterResult> {
+  return apiFetch<RegisterResult>("/auth/register", {
+    method: "POST",
+    body: { fullName, email, password, role },
+  });
+}
+
+export interface ForgotPasswordResult {
+  message: string;
+  resetLink?: string;
+  expiresInHours?: number;
+}
+
+/** POST /auth/forgot-password — always resolves; never leaks whether the email exists. */
+export async function forgotPassword(
+  email: string,
+): Promise<ForgotPasswordResult> {
+  return apiFetch<ForgotPasswordResult>("/auth/forgot-password", {
+    method: "POST",
+    body: { email },
+  });
+}
+
+/** POST /auth/reset-password — throws RESET_TOKEN_* on invalid/expired tokens. */
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+): Promise<void> {
+  await apiFetch<{ message: string }>("/auth/reset-password", {
+    method: "POST",
+    body: { token, newPassword },
+  });
+}

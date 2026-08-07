@@ -1,13 +1,35 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useReducedMotion, motion } from "framer-motion";
 import { Mail, ArrowRight, ArrowLeft } from "lucide-react";
 import { AuthSplitScreen } from "@/components/layout/AuthSplitScreen";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { DURATION, EASE } from "@/lib/motion";
+import { forgotPassword } from "@/lib/apiClient";
+import { sageErrorText } from "@/lib/queryClient";
 
 export default function ForgotPasswordPage() {
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const prefersReduced = useReducedMotion();
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await forgotPassword(email.trim());
+      navigate("/check-email", { state: { email: email.trim() } });
+    } catch (err) {
+      setError(sageErrorText(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <AuthSplitScreen
@@ -33,7 +55,13 @@ export default function ForgotPasswordPage() {
           password.
         </p>
 
-        <form className="space-y-5" onSubmit={(e) => e.preventDefault()}>
+        <form className="space-y-5" onSubmit={onSubmit}>
+          {error && (
+            <div className="rounded-lg border border-admin-danger-soft bg-admin-danger-soft/40 px-4 py-3 text-sm font-medium text-danger">
+              {error}
+            </div>
+          )}
+
           <div>
             <label
               htmlFor="email"
@@ -48,13 +76,21 @@ export default function ForgotPasswordPage() {
                 type="email"
                 placeholder="you@university.edu"
                 className="pl-10"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={submitting}
               />
             </div>
           </div>
 
-          <Button type="submit" className="w-full" size="lg">
-            Send Reset Link
-            <ArrowRight className="h-4 w-4" />
+          <Button
+            type="submit"
+            className="w-full"
+            size="lg"
+            disabled={submitting}
+          >
+            {submitting ? "Sending link…" : "Send Reset Link"}
+            {!submitting && <ArrowRight className="h-4 w-4" />}
           </Button>
         </form>
 
