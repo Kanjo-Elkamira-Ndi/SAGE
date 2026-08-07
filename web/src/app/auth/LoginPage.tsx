@@ -1,15 +1,41 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useReducedMotion, motion } from "framer-motion";
 import { Mail, Lock, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { AuthSplitScreen } from "@/components/layout/AuthSplitScreen";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { DURATION, EASE } from "@/lib/motion";
+import { useAuth } from "@/context/AuthContext";
+import { sageErrorText } from "@/lib/queryClient";
 
 export default function LoginPage() {
+  const navigate = useNavigate();
+  const { login, sessionMessage, clearSessionMessage } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState<string | null>(sessionMessage);
+  const [submitting, setSubmitting] = useState(false);
   const prefersReduced = useReducedMotion();
+
+  const bannerMessage = error ?? sessionMessage;
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    clearSessionMessage();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await login(email.trim(), password);
+      navigate("/admin", { replace: true });
+    } catch (err) {
+      setError(sageErrorText(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <AuthSplitScreen
@@ -36,7 +62,13 @@ export default function LoginPage() {
           Access your academic dashboard
         </p>
 
-        <form className="space-y-5" onSubmit={(e) => e.preventDefault()}>
+        {bannerMessage && (
+          <div className="mb-5 rounded-lg border border-admin-danger-soft bg-admin-danger-soft/40 px-4 py-3 text-sm font-medium text-danger">
+            {bannerMessage}
+          </div>
+        )}
+
+        <form className="space-y-5" onSubmit={onSubmit}>
           {/* Email */}
           <div>
             <label
@@ -50,8 +82,13 @@ export default function LoginPage() {
               <Input
                 id="email"
                 type="email"
+                required
+                autoComplete="email"
                 placeholder="you@university.edu"
                 className="pl-10"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={submitting}
               />
             </div>
           </div>
@@ -77,8 +114,13 @@ export default function LoginPage() {
               <Input
                 id="password"
                 type={showPassword ? "text" : "password"}
+                required
+                autoComplete="current-password"
                 placeholder="Enter your password"
                 className="pl-10 pr-10"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
               />
               <button
                 type="button"
@@ -96,9 +138,9 @@ export default function LoginPage() {
           </div>
 
           {/* Submit */}
-          <Button type="submit" className="w-full" size="lg">
-            Log In
-            <ArrowRight className="h-4 w-4" />
+          <Button type="submit" className="w-full" size="lg" disabled={submitting}>
+            {submitting ? "Signing in…" : "Log In"}
+            {!submitting && <ArrowRight className="h-4 w-4" />}
           </Button>
         </form>
 
@@ -118,17 +160,17 @@ export default function LoginPage() {
 
         {/* SSO Buttons */}
         <div className="grid grid-cols-2 gap-3">
-          <Button variant="secondary" size="md">
+          <Button variant="secondary" size="md" disabled={submitting}>
             SSO
           </Button>
-          <Button variant="secondary" size="md">
+          <Button variant="secondary" size="md" disabled={submitting}>
             EduID
           </Button>
         </div>
 
         {/* Register link */}
         <p className="mt-8 text-center text-sm text-text-secondary">
-          Don't have an account?{" "}
+          Don&apos;t have an account?{" "}
           <Link
             to="/register"
             className="font-medium text-primary hover:text-primary-hover"

@@ -11,6 +11,7 @@ import CheckEmailPage from "@/app/auth/CheckEmailPage";
 import ResetPasswordPage from "@/app/auth/ResetPasswordPage";
 import ResetSuccessPage from "@/app/auth/ResetSuccessPage";
 import ResetExpiredPage from "@/app/auth/ResetExpiredPage";
+import { RequireAdmin } from "@/context/AuthContext";
 import AdminLayout from "@/app/admin/AdminLayout";
 import AdminDashboardPage from "@/app/admin/DashboardPage";
 import UsersPage from "@/app/admin/UsersPage";
@@ -48,7 +49,11 @@ export const router = createBrowserRouter([
   { path: "/reset-expired", element: <ResetExpiredPage /> },
   {
     path: "/admin",
-    element: <AdminLayout />,
+    element: (
+      <RequireAdmin>
+        <AdminLayout />
+      </RequireAdmin>
+    ),
     children: [
       { index: true, element: <AdminDashboardPage /> },
       { path: "users", element: <UsersPage /> },

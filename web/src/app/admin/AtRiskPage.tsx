@@ -1,13 +1,11 @@
 import { useMemo, useState } from "react";
 import {
   FileDown,
-  Mail,
   TriangleAlert,
   CircleAlert,
   TrendingUp,
   GraduationCap,
   SlidersHorizontal,
-  Eye,
   Sparkles,
   ShieldAlert,
   RefreshCw,
@@ -24,11 +22,23 @@ import {
   TableCell,
 } from "@/components/ui/Table";
 import { PageHeader } from "@/features/admin/components/ui";
-import { RiskBadge, StatusBadge } from "@/features/admin/components/badges";
+import { RiskBadge } from "@/features/admin/components/badges";
 import { ProgressBar } from "@/components/ui/Chart";
-import { atRiskKpis, atRiskStudents, riskFactors, type AtRiskStudent } from "@/features/admin/data";
+import { QueryBoundary } from "@/features/admin/components/states";
+import {
+  useAtRiskReport,
+  useExportAtRisk,
+  useRecomputeSnapshots,
+} from "@/features/admin/queries";
+import type { AtRiskStudent, RiskLevel } from "@/features/admin/api";
+import { sageErrorText } from "@/lib/queryClient";
 
-const riskLevelFilters = ["All Levels", "HIGH", "MEDIUM", "LOW"];
+const riskLevelFilters: Array<"All Levels" | RiskLevel> = [
+  "All Levels",
+  "high",
+  "medium",
+  "low",
+];
 
 function RiskKpi({
   icon,
@@ -57,241 +67,244 @@ function RiskKpi({
 }
 
 export default function AtRiskPage() {
-  const [levelFilter, setLevelFilter] = useState("All Levels");
+  const [levelFilter, setLevelFilter] = useState<"All Levels" | RiskLevel>("All Levels");
 
-  const filtered = useMemo(() => {
-    return atRiskStudents.filter(
-      (s) => levelFilter === "All Levels" || s.level === levelFilter
-    );
-  }, [levelFilter]);
+  const { data, isLoading, error, refetch } = useAtRiskReport({
+    level: levelFilter === "All Levels" ? undefined : levelFilter,
+  });
+  const exportCsv = useExportAtRisk();
+  const recompute = useRecomputeSnapshots();
+
+  const items = data?.items ?? [];
+
+  const filtered = useMemo(
+    () => items.filter((s) => levelFilter === "All Levels" || s.riskLevel === levelFilter),
+    [items, levelFilter],
+  );
+
+  const counts = useMemo(() => {
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+    for (const s of items) {
+      if (s.riskLevel === "high") high += 1;
+      else if (s.riskLevel === "medium") medium += 1;
+      else low += 1;
+    }
+    return { high, medium, low };
+  }, [items]);
+
+  const avgScore = items.length
+    ? Math.round((items.reduce((acc, s) => acc + s.riskScore, 0) / items.length) * 100) / 100
+    : 0;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="At-Risk Students Report"
-        description="Identification of learners requiring immediate academic intervention based on Q3 analytics."
+        description="Identification of learners requiring immediate academic intervention based on risk analytics."
         actions={
           <>
-            <Button variant="secondary" size="sm">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={exportCsv.isPending}
+              onClick={() =>
+                exportCsv.mutate({
+                  level: levelFilter === "All Levels" ? undefined : levelFilter,
+                })
+              }
+            >
               <FileDown className="h-4 w-4" />
-              Export
+              Export CSV
             </Button>
-            <Button size="sm">
-              <Mail className="h-4 w-4" />
-              Notify Advisors
+            <Button
+              size="sm"
+              disabled={recompute.isPending}
+              onClick={() => recompute.mutate(undefined)}
+            >
+              <RefreshCw className={`h-4 w-4 ${recompute.isPending ? "animate-spin" : ""}`} />
+              Recompute Snapshots
             </Button>
           </>
         }
       />
 
-      {/* KPI strip */}
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <RiskKpi
-          icon={<TriangleAlert className="h-5 w-5" />}
-          label="High Risk"
-          value={atRiskKpis.high}
-          chipClass="bg-admin-danger-soft text-danger"
-        />
-        <RiskKpi
-          icon={<CircleAlert className="h-5 w-5" />}
-          label="Medium Risk"
-          value={atRiskKpis.medium}
-          chipClass="bg-amber-50 text-admin-gold-dark"
-        />
-        <RiskKpi
-          icon={<TrendingUp className="h-5 w-5" />}
-          label="Avg. Risk Score"
-          value={atRiskKpis.avgScore}
-          chipClass="bg-admin-royal-soft text-admin-royal"
-        />
-        <RiskKpi
-          icon={<GraduationCap className="h-5 w-5" />}
-          label="Active Actions"
-          value={atRiskKpis.activeActions}
-          chipClass="bg-[#E8EEF7] text-[#4059AA]"
-        />
-      </section>
+      <QueryBoundary
+        isLoading={isLoading}
+        error={error}
+        errorText={sageErrorText(error, "Failed to load at-risk report.")}
+        onRetry={() => refetch()}
+      >
+        {/* KPI strip */}
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <RiskKpi
+            icon={<TriangleAlert className="h-5 w-5" />}
+            label="High Risk"
+            value={counts.high.toString()}
+            chipClass="bg-admin-danger-soft text-danger"
+          />
+          <RiskKpi
+            icon={<CircleAlert className="h-5 w-5" />}
+            label="Medium Risk"
+            value={counts.medium.toString()}
+            chipClass="bg-amber-50 text-admin-gold-dark"
+          />
+          <RiskKpi
+            icon={<TrendingUp className="h-5 w-5" />}
+            label="Avg. Risk Score"
+            value={`${avgScore}%`}
+            chipClass="bg-admin-royal-soft text-admin-royal"
+          />
+          <RiskKpi
+            icon={<GraduationCap className="h-5 w-5" />}
+            label="Low Risk"
+            value={counts.low.toString()}
+            chipClass="bg-[#E8EEF7] text-[#4059AA]"
+          />
+        </section>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Risk table */}
-        <div className="space-y-4 lg:col-span-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 flex items-center gap-1.5 text-sm font-medium text-admin-text-muted">
-              <SlidersHorizontal className="h-4 w-4" />
-              Filter:
-            </span>
-            {riskLevelFilters.map((f) => (
-              <button
-                key={f}
-                onClick={() => setLevelFilter(f)}
-                className={`rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors ${
-                  levelFilter === f
-                    ? "border-admin-royal bg-admin-royal text-white"
-                    : "border-admin-outline bg-white text-admin-text-muted hover:border-admin-royal hover:text-admin-royal"
-                }`}
-              >
-                {f}
-              </button>
-            ))}
-            <span className="ml-auto text-sm font-semibold text-admin-text-muted">
-              Showing 1-{filtered.length} of 170 students
-            </span>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* Risk table */}
+          <div className="space-y-4 lg:col-span-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 flex items-center gap-1.5 text-sm font-medium text-admin-text-muted">
+                <SlidersHorizontal className="h-4 w-4" />
+                Filter:
+              </span>
+              {riskLevelFilters.map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setLevelFilter(f)}
+                  className={`rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                    levelFilter === f
+                      ? "border-admin-royal bg-admin-royal text-white"
+                      : "border-admin-outline bg-white text-admin-text-muted hover:border-admin-royal hover:text-admin-royal"
+                  }`}
+                >
+                  {f === "All Levels" ? "All Levels" : f.toUpperCase()}
+                </button>
+              ))}
+              <span className="ml-auto text-sm font-semibold text-admin-text-muted">
+                Showing {filtered.length} of {items.length} students
+              </span>
+            </div>
+
+            <Card className="overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Student</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Risk Level</TableHead>
+                    <TableHead>Risk Score</TableHead>
+                    <TableHead>GPA</TableHead>
+                    <TableHead>Reasons</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((s: AtRiskStudent) => (
+                    <TableRow key={s.studentId}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <Avatar name={s.name} size="sm" />
+                          <div>
+                            <p className="font-medium text-text-primary">{s.name}</p>
+                            <p className="text-xs text-admin-text-muted">
+                              ID: {s.studentId}
+                            </p>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-admin-text-muted">{s.email}</TableCell>
+                      <TableCell>
+                        <RiskBadge level={s.riskLevel.toUpperCase() as "HIGH" | "MEDIUM" | "LOW"} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="w-9 font-semibold text-text-primary">
+                            {s.riskScore}%
+                          </span>
+                          <ProgressBar
+                            value={s.riskScore}
+                            color={
+                              s.riskLevel === "high"
+                                ? "#C0362C"
+                                : s.riskLevel === "medium"
+                                  ? "#FFC641"
+                                  : "#1E8E5A"
+                            }
+                            className="w-16"
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-admin-text-muted">
+                        {s.gpa ?? "—"}
+                      </TableCell>
+                      <TableCell className="max-w-[220px]">
+                        <p className="truncate text-xs text-admin-text-muted">
+                          {s.reasons.length > 0 ? s.reasons.join(" · ") : "—"}
+                        </p>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {filtered.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-10 text-center text-admin-text-muted">
+                        No at-risk students at this level.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </Card>
           </div>
 
-          <Card className="overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Student Name</TableHead>
-                  <TableHead>Course</TableHead>
-                  <TableHead>Risk Level</TableHead>
-                  <TableHead>Risk Score</TableHead>
-                  <TableHead>Primary Factor</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((s: AtRiskStudent) => (
-                  <TableRow key={s.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <Avatar name={s.name} size="sm" />
-                        <div>
-                          <p className="font-medium text-text-primary">{s.name}</p>
-                          <p className="text-xs text-admin-text-muted">
-                            ID: {s.studentId}
-                          </p>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <p className="text-sm font-medium text-text-primary">
-                        {s.course}
-                      </p>
-                      <p className="text-xs text-admin-text-muted">
-                        {s.department}
-                      </p>
-                    </TableCell>
-                    <TableCell>
-                      <RiskBadge level={s.level} />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="w-9 font-semibold text-text-primary">
-                          {s.score}%
-                        </span>
-                        <ProgressBar
-                          value={s.score}
-                          color={
-                            s.level === "HIGH"
-                              ? "#C0362C"
-                              : s.level === "MEDIUM"
-                                ? "#FFC641"
-                                : "#1E8E5A"
-                          }
-                          className="w-16"
-                        />
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={s.factor} />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end">
-                        <button
-                          aria-label={`View details for ${s.name}`}
-                          className="flex items-center gap-1.5 rounded-lg border border-admin-outline px-3 py-1.5 text-sm font-medium text-admin-royal transition-colors hover:bg-admin-royal-soft"
-                        >
-                          <Eye className="h-4 w-4" />
-                          View Details
-                        </button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <div className="flex items-center justify-between border-t border-admin-outline bg-admin-container-low/50 px-4 py-3">
-              <p className="text-sm text-admin-text-muted">Previous</p>
-              <div className="flex items-center gap-1">
-                <span className="rounded-md bg-admin-royal px-2.5 py-1 text-sm font-medium text-white">
-                  1
-                </span>
-                <span className="px-1 text-sm text-admin-text-muted">17</span>
-              </div>
-              <p className="text-sm text-admin-text-muted">Next</p>
-            </div>
-          </Card>
-        </div>
-
-        {/* Side panel */}
-        <div className="space-y-6">
-          <Card className="border-admin-gold-soft bg-admin-gold-soft/40 p-5">
-            <div className="mb-3 flex items-center gap-2.5">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-admin-gold text-text-primary">
-                <Sparkles className="h-5 w-5" />
-              </div>
-              <div>
-                <h4 className="text-base font-semibold tracking-tight">
-                  Automated Intervention Workflow
-                </h4>
-                <p className="text-xs font-medium text-admin-gold-dark">
-                  Academic Precision system
-                </p>
-              </div>
-            </div>
-            <p className="text-sm leading-relaxed text-admin-text-muted">
-              Our Academic Precision system automatically flags students whose
-              scores exceed the 60% risk threshold. Advisors are notified within
-              24 hours.
-            </p>
-            <div className="mt-4 space-y-2.5">
-              <div className="flex items-center justify-between rounded-lg bg-white/70 px-3 py-2 text-sm">
-                <span className="flex items-center gap-2 text-admin-text-muted">
-                  <Sparkles className="h-4 w-4 text-admin-royal" />
-                  Predictive Analytics
-                </span>
-                <span className="font-semibold text-success">Enabled</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg bg-white/70 px-3 py-2 text-sm">
-                <span className="flex items-center gap-2 text-admin-text-muted">
-                  <ShieldAlert className="h-4 w-4 text-admin-royal" />
-                  Next Batch
-                </span>
-                <span className="font-semibold text-text-primary">08:00 AM</span>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h4 className="text-base font-semibold tracking-tight">
-                Risk Factor Distribution
-              </h4>
-              <Button variant="secondary" size="sm">
-                <RefreshCw className="h-3.5 w-3.5" />
-                Recalculate
-              </Button>
-            </div>
-            <div className="space-y-4">
-              {riskFactors.map((f) => (
-                <div key={f.label}>
-                  <div className="mb-1.5 flex items-center justify-between text-sm">
-                    <span className="text-admin-text-muted">{f.label}</span>
-                    <span className="font-semibold text-text-primary">
-                      {f.value}%
-                    </span>
-                  </div>
-                  <ProgressBar
-                    value={f.value}
-                    color={f.label === "LMS Engagement" ? "#90A8FF" : "#00236F"}
-                  />
+          {/* Side panel */}
+          <div className="space-y-6">
+            <Card className="border-admin-gold-soft bg-admin-gold-soft/40 p-5">
+              <div className="mb-3 flex items-center gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-admin-gold text-text-primary">
+                  <Sparkles className="h-5 w-5" />
                 </div>
-              ))}
-            </div>
-          </Card>
+                <div>
+                  <h4 className="text-base font-semibold tracking-tight">
+                    Automated Intervention Workflow
+                  </h4>
+                  <p className="text-xs font-medium text-admin-gold-dark">
+                    Academic Precision system
+                  </p>
+                </div>
+              </div>
+              <p className="text-sm leading-relaxed text-admin-text-muted">
+                Our Academic Precision system automatically flags students whose
+                scores exceed the 60% risk threshold. Advisors are notified within
+                24 hours.
+              </p>
+              <div className="mt-4 space-y-2.5">
+                <div className="flex items-center justify-between rounded-lg bg-white/70 px-3 py-2 text-sm">
+                  <span className="flex items-center gap-2 text-admin-text-muted">
+                    <Sparkles className="h-4 w-4 text-admin-royal" />
+                    Predictive Analytics
+                  </span>
+                  <span className="font-semibold text-success">Enabled</span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-white/70 px-3 py-2 text-sm">
+                  <span className="flex items-center gap-2 text-admin-text-muted">
+                    <ShieldAlert className="h-4 w-4 text-admin-royal" />
+                    Snapshot Date
+                  </span>
+                  <span className="font-semibold text-text-primary">
+                    {items[0]?.lastSnapshotDate
+                      ? new Date(items[0].lastSnapshotDate).toLocaleDateString()
+                      : "—"}
+                  </span>
+                </div>
+              </div>
+            </Card>
+          </div>
         </div>
-      </div>
+      </QueryBoundary>
     </div>
   );
 }

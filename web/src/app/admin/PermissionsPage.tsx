@@ -1,11 +1,9 @@
+import { useState } from "react";
 import {
   ShieldCheck,
   Fingerprint,
   History,
   ArrowRight,
-  UserPlus,
-  Filter,
-  Download,
   KeyRound,
   Plus,
   Shield,
@@ -14,9 +12,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Info,
+  Loader2,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Avatar } from "@/components/ui/Avatar";
 import {
@@ -28,13 +26,24 @@ import {
   TableCell,
 } from "@/components/ui/Table";
 import { PageHeader } from "@/features/admin/components/ui";
+import { QueryBoundary } from "@/features/admin/components/states";
 import {
-  personnel,
-  securityKeys,
-  permissionKpis,
-  roleCards,
-  type Personnel,
-} from "@/features/admin/data";
+  useGrantPermission,
+  useRevokePermission,
+  useUserPermissions,
+  useUsers,
+} from "@/features/admin/queries";
+import type { AdminUser } from "@/features/admin/api";
+import { sageErrorText } from "@/lib/queryClient";
+
+const AVAILABLE_KEYS = [
+  "SYSTEM_ADMIN",
+  "DEPARTMENT_HEAD",
+  "AUDIT_LOGS",
+  "REPORTS",
+  "ENROLLMENTS",
+  "ANNOUNCEMENTS",
+];
 
 const roleCardsIcon = {
   admin_panel_settings: Shield,
@@ -42,18 +51,127 @@ const roleCardsIcon = {
   monitoring: Activity,
 } as const;
 
+const roleCards = [
+  {
+    icon: "admin_panel_settings" as const,
+    title: "System Roots",
+    desc: "Full bypass authority for all institutional nodes. Restricted to Executive Board only.",
+  },
+  {
+    icon: "account_balance" as const,
+    title: "Departmental Leads",
+    desc: "Curriculum and staff management within specific college branches.",
+  },
+  {
+    icon: "monitoring" as const,
+    title: "Audit Officers",
+    desc: "Read-only high-level data access for institutional compliance reporting.",
+  },
+];
+
+function PermissionRow({ user }: { user: AdminUser }) {
+  const { data, isLoading } = useUserPermissions(user.id);
+  const grant = useGrantPermission(user.id);
+  const revoke = useRevokePermission(user.id);
+  const [selected, setSelected] = useState("");
+
+  const permissions = data?.permissions ?? [];
+
+  const onAssign = () => {
+    if (!selected) return;
+    grant.mutate(selected);
+    setSelected("");
+  };
+
+  return (
+    <TableRow key={user.id}>
+      <TableCell>
+        <div className="flex items-center gap-3">
+          <Avatar name={user.fullName} size="sm" />
+          <div>
+            <p className="font-medium text-text-primary">{user.fullName}</p>
+            <p className="text-xs text-admin-text-muted">{user.email}</p>
+          </div>
+        </div>
+      </TableCell>
+      <TableCell>
+        {isLoading ? (
+          <span className="text-xs text-admin-text-muted">Loading keys…</span>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {permissions.map((key) => (
+              <span
+                key={key}
+                className="inline-flex items-center gap-1 rounded-full border border-admin-royal-soft bg-admin-royal-soft/50 px-2.5 py-0.5 text-xs font-semibold text-admin-royal"
+              >
+                <KeyRound className="h-3 w-3" />
+                {key}
+                <button
+                  aria-label={`Revoke ${key}`}
+                  disabled={revoke.isPending}
+                  onClick={() => revoke.mutate(key)}
+                  className="text-admin-royal/60 transition-colors hover:text-danger"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {permissions.length === 0 && (
+              <span className="text-xs text-admin-text-muted">No custom keys</span>
+            )}
+          </div>
+        )}
+        {grant.error && (
+          <p className="mt-1.5 text-xs text-danger">{sageErrorText(grant.error)}</p>
+        )}
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center justify-end gap-2">
+          <Select
+            className="h-9 w-44 py-0 text-xs"
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            aria-label={`Assign key to ${user.fullName}`}
+          >
+            <option value="">Assign Key...</option>
+            {AVAILABLE_KEYS.filter((k) => !permissions.includes(k)).map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </Select>
+          <button
+            aria-label={`Assign key to ${user.fullName}`}
+            disabled={!selected || grant.isPending}
+            onClick={onAssign}
+            className="rounded-lg p-2 text-admin-text-muted transition-colors hover:bg-admin-container-low hover:text-admin-royal disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {grant.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
+          </button>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 export default function PermissionsPage() {
+  const [page, setPage] = useState(1);
+  const { data, isLoading, error, refetch } = useUsers({ page, limit: 20 });
+
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / 20));
+  const admins = items.filter((u) => u.role === "admin").length;
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Permissions Management"
         description="Configure elevated access levels and system-wide security keys for academic staff."
-        actions={
-          <Button>
-            <UserPlus className="h-4 w-4" />
-            Assign Key
-          </Button>
-        }
       />
 
       {/* Security overview */}
@@ -64,10 +182,10 @@ export default function PermissionsPage() {
           </div>
           <div>
             <p className="text-sm font-medium text-admin-text-muted">
-              Total Administrators
+              Total Users
             </p>
             <p className="text-2xl font-bold leading-none tracking-tight text-text-primary">
-              {permissionKpis.totalAdmins}
+              {total.toLocaleString()}
             </p>
           </div>
         </Card>
@@ -77,10 +195,10 @@ export default function PermissionsPage() {
           </div>
           <div>
             <p className="text-sm font-medium text-admin-text-muted">
-              Active Sessions
+              Admins (in view)
             </p>
             <p className="text-2xl font-bold leading-none tracking-tight text-text-primary">
-              {permissionKpis.activeSessions}
+              {admins}
             </p>
           </div>
         </Card>
@@ -91,10 +209,10 @@ export default function PermissionsPage() {
             </div>
             <div>
               <p className="text-sm font-medium text-admin-text-muted">
-                Audit History
+                Audit Trail
               </p>
               <p className="text-sm font-semibold text-text-primary">
-                Last 24 hours of permission changes
+                Permission changes logged to activity
               </p>
             </div>
           </div>
@@ -110,111 +228,64 @@ export default function PermissionsPage() {
       {/* Authorized personnel */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h4 className="text-lg font-semibold tracking-tight">
-            Authorized Personnel
-          </h4>
-          <div className="flex items-center gap-2">
-            <button
-              aria-label="Filter"
-              className="rounded-lg border border-admin-outline p-2 text-admin-text-muted transition-colors hover:bg-admin-container-low hover:text-admin-royal"
-            >
-              <Filter className="h-4 w-4" />
-            </button>
-            <Button variant="secondary" size="sm">
-              <Download className="h-4 w-4" />
-              Download
-            </Button>
+          <div>
+            <h4 className="text-lg font-semibold tracking-tight">
+              Authorized Personnel
+            </h4>
+            <p className="text-sm text-admin-text-muted">
+              Grant and revoke access keys per user.
+            </p>
           </div>
         </div>
 
         <Card className="overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Current Access</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {personnel.map((p: Personnel) => (
-                <TableRow key={p.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <Avatar name={p.name} size="sm" />
-                      <div>
-                        <p className="font-medium text-text-primary">{p.name}</p>
-                        <p className="text-xs text-admin-text-muted">{p.email}</p>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1.5">
-                      {p.access.map((key) => (
-                        <span
-                          key={key}
-                          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
-                            p.restricted
-                              ? "border-admin-danger-soft bg-admin-danger-soft/40 text-danger"
-                              : "border-admin-royal-soft bg-admin-royal-soft/50 text-admin-royal"
-                          }`}
-                        >
-                          <KeyRound className="h-3 w-3" />
-                          {key}
-                        </span>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center justify-end gap-2">
-                      <Select
-                        className="h-9 w-40 py-0 text-xs"
-                        defaultValue="Assign Key..."
-                        aria-label={`Assign key to ${p.name}`}
-                      >
-                        <option disabled>Assign Key...</option>
-                        {securityKeys.map((k) => (
-                          <option key={k}>{k}</option>
-                        ))}
-                      </Select>
-                      <button
-                        aria-label={`Manage key for ${p.name}`}
-                        className="rounded-lg p-2 text-admin-text-muted transition-colors hover:bg-admin-container-low hover:text-admin-royal"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </TableCell>
+          <QueryBoundary
+            isLoading={isLoading}
+            error={error}
+            errorText={sageErrorText(error, "Failed to load users.")}
+            onRetry={() => refetch()}
+          >
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>Current Access</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {items.map((u) => (
+                  <PermissionRow key={u.id} user={u} />
+                ))}
+                {items.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="py-10 text-center text-admin-text-muted">
+                      No users found.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </QueryBoundary>
           <div className="flex flex-col items-center justify-between gap-3 border-t border-admin-outline bg-admin-container-low/50 px-4 py-3 sm:flex-row">
             <p className="text-sm text-admin-text-muted">
-              Showing {personnel.length} of 24 Authorized Personnel
+              Page {page} of {totalPages} · {total.toLocaleString()} users
             </p>
             <div className="flex items-center gap-1">
               <button
                 aria-label="Previous page"
-                className="rounded-lg border border-admin-outline p-1.5 text-admin-text-muted transition-colors hover:bg-white hover:text-admin-royal"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="rounded-lg border border-admin-outline p-1.5 text-admin-text-muted transition-colors hover:bg-white hover:text-admin-royal disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              {[1, 2, 3].map((n) => (
-                <span
-                  key={n}
-                  className={`rounded-md px-2.5 py-1 text-sm font-medium ${
-                    n === 1
-                      ? "bg-admin-royal text-white"
-                      : "text-admin-text-muted"
-                  }`}
-                >
-                  {n}
-                </span>
-              ))}
+              <span className="px-2 text-sm font-medium text-text-primary">{page}</span>
               <button
                 aria-label="Next page"
-                className="rounded-lg border border-admin-outline p-1.5 text-admin-text-muted transition-colors hover:bg-white hover:text-admin-royal"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="rounded-lg border border-admin-outline p-1.5 text-admin-text-muted transition-colors hover:bg-white hover:text-admin-royal disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
@@ -226,19 +297,13 @@ export default function PermissionsPage() {
       {/* Role cards */}
       <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {roleCards.map(({ icon, title, desc }) => {
-          const Icon = roleCardsIcon[icon as keyof typeof roleCardsIcon] ?? Info;
+          const Icon = roleCardsIcon[icon] ?? Info;
           return (
             <Card key={title} className="group p-5 transition-colors hover:border-admin-royal/40">
               <div className="mb-4 flex items-center justify-between">
                 <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-admin-royal-soft text-admin-royal transition-transform group-hover:scale-105">
                   <Icon className="h-5 w-5" />
                 </div>
-                <button
-                  aria-label={`Open ${title}`}
-                  className="rounded-lg p-2 text-admin-text-muted transition-colors hover:bg-admin-container-low hover:text-admin-royal"
-                >
-                  <ArrowRight className="h-4 w-4" />
-                </button>
               </div>
               <h5 className="text-base font-semibold tracking-tight text-text-primary">
                 {title}
